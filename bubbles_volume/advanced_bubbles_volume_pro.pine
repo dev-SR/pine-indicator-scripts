@@ -1,0 +1,227 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Advanced Bubbles Volume Pro — Enhanced from BigBeluga's original concept
+
+//@version=5
+indicator("Advanced Bubbles Volume Pro", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var GRP_BUB = "📊 Volume Bubbles"
+bool  show_bubbles = input.bool(true,  "Show Bubbles",       group = GRP_BUB, inline = "b1")
+float threshold    = input.float(1.5,  "Vol Threshold (σ)",  group = GRP_BUB, inline = "b1", step = 0.1, minval = 0.1, maxval = 7,
+                                 tooltip = "Minimum normalized volume (std devs) to start showing bubbles.")
+bool  show_heatmap = input.bool(false, "HeatMap Mode",       group = GRP_BUB,
+                                 tooltip = "Override delta colors with a classic volume-intensity heatmap.")
+
+var GRP_DELTA = "📈 Volume Delta Bias"
+bool  show_delta   = input.bool(true,  "Delta-Colored Bubbles", group = GRP_DELTA,
+                                 tooltip = "Color bubbles green/red based on estimated buy vs sell pressure (close position within candle range).")
+float delta_thresh = input.float(0.1,  "Delta Neutral Zone",    group = GRP_DELTA, step = 0.05, minval = 0, maxval = 0.49,
+                                 tooltip = "Close-position offset from midpoint to be considered neutral (grey).")
+
+var GRP_ABS = "🔵 Absorption Detection"
+bool  show_absorp  = input.bool(true,  "Detect Absorption",  group = GRP_ABS,
+                                 tooltip = "Flags bars with high volume but a tiny body — institutions absorbing supply/demand.")
+float absorp_ratio = input.float(0.2,  "Max Body/Range",     group = GRP_ABS, step = 0.05, minval = 0.05, maxval = 0.5,
+                                 tooltip = "Body-to-range ratio threshold. Lower = more selective (doji-like).")
+color absorp_color = input.color(color.new(#00bfff, 10), "Color", group = GRP_ABS)
+
+var GRP_EXH = "⚡ Exhaustion Detection"
+bool  show_exhaust = input.bool(true,  "Detect Exhaustion",  group = GRP_EXH,
+                                 tooltip = "Flags high-volume bars where price was strongly rejected — potential reversal signal.")
+float exhaust_wick = input.float(0.60, "Min Wick/Range",     group = GRP_EXH, step = 0.05, minval = 0.3, maxval = 0.95,
+                                 tooltip = "Rejection wick must be at least this fraction of the total candle range.")
+color bull_exh_col = input.color(color.new(#00ff88, 15), "Bull Exhaustion", group = GRP_EXH)
+color bear_exh_col = input.color(color.new(#ff3333, 15), "Bear Exhaustion", group = GRP_EXH)
+
+var GRP_CLIMAX = "🔥 Volume Climax"
+bool  show_climax  = input.bool(true,  "Detect Climax",      group = GRP_CLIMAX,
+                                 tooltip = "Marks bars with exceptionally extreme volume — potential turning points or major continuation.")
+float climax_mult  = input.float(4.0,  "Climax Threshold (σ)",group = GRP_CLIMAX, step = 0.5, minval = 2.0, maxval = 10.0)
+bool  climax_bg    = input.bool(true,  "Highlight Background",group = GRP_CLIMAX,
+                                 tooltip = "Paint the chart background on climax bars for quick visual identification.")
+
+var GRP_LVL = "📐 Significant Levels"
+bool  show_levels  = input.bool(false, "Show Level Lines",   group = GRP_LVL)
+bool  extend_lines = input.bool(true,  "Extend Right",       group = GRP_LVL)
+int   levels_qty   = input.int(12,     "Max Lines on Chart", group = GRP_LVL, minval = 1, maxval = 100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CORE CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Normalized volume (z-score against 200-bar rolling StdDev) ───────────────
+float vol_sd   = ta.stdev(volume, 200)
+float norm_vol = vol_sd > 0 ? volume / vol_sd : 0
+
+// ── Candle anatomy ────────────────────────────────────────────────────────────
+float candle_range  = high - low
+float body          = math.abs(close - open)
+float body_ratio    = candle_range > 0 ? body / candle_range : 0
+float upper_wick    = high - math.max(close, open)
+float lower_wick    = math.min(close, open) - low
+float upper_wick_r  = candle_range > 0 ? upper_wick / candle_range : 0
+float lower_wick_r  = candle_range > 0 ? lower_wick / candle_range : 0
+
+// Close position in range: 0.0 = closed at low, 1.0 = closed at high
+float close_pos     = candle_range > 0 ? (close - low) / candle_range : 0.5
+float delta_bias    = close_pos - 0.5  // –0.5 (full bear) → +0.5 (full bull)
+
+// ── Pattern flags ─────────────────────────────────────────────────────────────
+bool is_high_vol       = norm_vol > threshold
+
+// Absorption: high volume + tiny body (supply/demand being absorbed)
+bool is_absorption     = is_high_vol and body_ratio < absorp_ratio and show_absorp
+
+// Exhaustion: high volume + strong wick rejection (buyers/sellers running out)
+bool is_bull_exhaustion = is_high_vol and close > open and upper_wick_r > exhaust_wick and show_exhaust
+bool is_bear_exhaustion = is_high_vol and close < open and lower_wick_r > exhaust_wick and show_exhaust
+
+// Climax: extreme outlier volume
+bool is_climax         = norm_vol >= climax_mult
+
+// ── Bubble size tiers ─────────────────────────────────────────────────────────
+bool cond_tiny   = norm_vol > 0              and norm_vol < threshold          and show_bubbles
+bool cond_small  = norm_vol >= threshold     and norm_vol < threshold + 1.0    and show_bubbles
+bool cond_normal = norm_vol >= threshold+1.0 and norm_vol < threshold + 2.0    and show_bubbles
+bool cond_large  = norm_vol >= threshold+2.0 and norm_vol < threshold + 3.0    and show_bubbles
+bool cond_huge   = norm_vol >= threshold+3.0                                   and show_bubbles
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  COLOR SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── 5-stop Heatmap gradient ───────────────────────────────────────────────────
+color hm_c1 = color.new(#00c8ff, 55)   // aqua   — low volume
+color hm_c2 = color.new(#00e676, 40)   // green  — moderate
+color hm_c3 = color.new(#ffea00, 25)   // yellow — elevated
+color hm_c4 = color.new(#ff6d00, 15)   // orange — high
+color hm_c5 = color.new(#d50000, 5)    // red    — extreme
+
+color heatmap_col =
+     norm_vol < 1   ? color.from_gradient(norm_vol, 0, 1, hm_c1, hm_c2) :
+     norm_vol < 3   ? color.from_gradient(norm_vol, 1, 3, hm_c2, hm_c3) :
+     norm_vol < 5   ? color.from_gradient(norm_vol, 3, 5, hm_c3, hm_c4) :
+                      color.from_gradient(norm_vol, 5, 9, hm_c4, hm_c5)
+
+// ── Delta-aware gradient ──────────────────────────────────────────────────────
+//    Bullish: yellow-green → vivid green as volume rises
+//    Bearish: salmon      → vivid red   as volume rises
+//    Neutral: grey
+color bull_lo  = color.new(#69f0ae, 50)
+color bull_hi  = color.new(#00c853, 5)
+color bear_lo  = color.new(#ff8a80, 50)
+color bear_hi  = color.new(#d50000, 5)
+color neut_col = color.new(#9e9e9e, 45)
+
+color delta_col =
+     delta_bias >  delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bull_lo, bull_hi) :
+     delta_bias < -delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bear_lo, bear_hi) :
+                                  neut_col
+
+// ── Priority override: special patterns get their own colors ─────────────────
+color base_col  = show_heatmap ? heatmap_col : show_delta ? delta_col :
+                  color.from_gradient(norm_vol, 0, 8, color.new(color.green, 80), color.new(color.green, 5))
+
+color final_col =
+     is_absorption      ? absorp_color  :
+     is_bull_exhaustion ? bull_exh_col  :
+     is_bear_exhaustion ? bear_exh_col  :
+                          base_col
+
+// ── Background flash on climax ────────────────────────────────────────────────
+color climax_bg_bull = color.new(color.green, 88)
+color climax_bg_bear = color.new(color.red,   88)
+bgcolor(is_climax and climax_bg ? (close >= open ? climax_bg_bull : climax_bg_bear): na, title = "Climax Background")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BUBBLE PLOTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float src = hl2
+
+plotshape(cond_tiny   ? src : na, "", shape.circle, location.absolute, final_col, size = size.tiny)
+plotshape(cond_small  ? src : na, "", shape.circle, location.absolute, final_col, size = size.small)
+plotshape(cond_normal ? src : na, "", shape.circle, location.absolute, final_col, size = size.normal)
+plotshape(cond_large  ? src : na, "", shape.circle, location.absolute, final_col, size = size.large)
+plotshape(cond_huge   ? src : na, "", shape.circle, location.absolute, final_col, size = size.huge)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PATTERN LABELS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if barstate.isconfirmed
+
+    // ── Absorption label (above bar) ─────────────────────────────────────────
+    if is_absorption
+        label.new(bar_index, high, "A",
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = color.new(absorp_color, 30),
+                  style     = label.style_label_down,
+                  textcolor = color.white,
+                  size      = size.small,
+                  tooltip   = "Absorption — High volume, tiny body.\nInstitutions absorbing supply/demand.\nVol: " + str.tostring(volume, format.volume))
+
+    // ── Bull Exhaustion label (above wick) ───────────────────────────────────
+    if is_bull_exhaustion and not is_absorption
+        label.new(bar_index, high, "↑X",
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = color.new(bull_exh_col, 20),
+                  style     = label.style_label_down,
+                  textcolor = color.white,
+                  size      = size.small,
+                  tooltip   = "Bull Exhaustion — High volume up-bar, but strongly rejected at high.\nPotential reversal or pause.\nVol: " + str.tostring(volume, format.volume))
+
+    // ── Bear Exhaustion label (below wick) ───────────────────────────────────
+    if is_bear_exhaustion and not is_absorption
+        label.new(bar_index, low, "↓X",
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = color.new(bear_exh_col, 20),
+                  style     = label.style_label_up,
+                  textcolor = color.white,
+                  size      = size.small,
+                  tooltip   = "Bear Exhaustion — High volume down-bar, but strongly rejected at low.\nPotential reversal or pause.\nVol: " + str.tostring(volume, format.volume))
+
+    // ── Climax volume label (show raw volume number) ─────────────────────────
+    if is_climax and show_bubbles
+        label.new(bar_index, src,
+                  str.tostring(volume, format.volume),
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = #00000000,
+                  style     = label.style_label_center,
+                  textcolor = chart.fg_color,
+                  size      = size.small)
+
+// ── Significant level lines ────────────────────────────────────────────────── 
+if is_climax and show_levels
+    line.new(bar_index, src, last_bar_index, src,
+             xloc    = xloc.bar_index,
+             extend  = extend_lines ? extend.right : extend.none,
+             color   = final_col,
+             style   = line.style_dashed,
+             width   = 2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HOUSE-KEEPING — limit object count
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if array.size(line.all) > levels_qty
+    line.delete(array.shift(line.all))
+
+if array.size(label.all) > levels_qty * 3
+    label.delete(array.shift(label.all))
+
+// ── No-volume guard ────────────────────────────────────────────────────────────
+if ta.cum(volume) <= 0 and barstate.islast
+    label.new(bar_index, hl2,
+              "⚠ No Volume Data\nSwitch to a different symbol",
+              style     = label.style_label_left,
+              textcolor = chart.fg_color,
+              color     = color.new(color.red, 70))
