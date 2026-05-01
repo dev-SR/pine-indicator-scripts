@@ -1,0 +1,47 @@
+import math
+from pprint import pprint
+def risk_percentage_range(
+    A,
+    r0=0.10,     # starting risk
+    decay=.7,   # 1/7th every 10x
+    k=0.15,       # smooth decay inside range
+    min_r=0.01,
+    max_r=0.15
+):
+    if A <= 0:
+        return min_r
+
+    # 1. find 10x range
+    range_level = int(math.log10(A))
+    
+    # 2. base of this range (10, 100, 1000...)
+    range_base = 10 ** range_level
+
+    # 3. decay per 10x jump
+    r_range = r0 * (decay ** range_level)
+
+    # 4. smooth decay inside the range
+    r = r_range * (A / range_base) ** (-k)
+    # print(r)
+
+    # clamp
+    return max(min_r, min(max_r, r))
+    
+def trade_levels(A, rr=2):
+    r = risk_percentage_range(A)
+
+    loss = A * r
+    profit = loss * rr
+
+    return {
+        "account": A,
+        "risk_pct": round(r, 4),
+        "max_loss_per_trade": round(loss, 2),
+        "take_min_profit_per_trade": round(profit, 2)
+    }
+    
+accounts = range(10,1000,20)
+
+for A in accounts:
+    pprint(trade_levels(A))
+    print()

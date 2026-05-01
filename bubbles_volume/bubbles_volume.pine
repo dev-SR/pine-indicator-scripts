@@ -1,3 +1,7 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Advanced Bubbles Volume Pro — Enhanced from BigBeluga's original concept
+
 //@version=5
 indicator("Advanced Bubbles Volume Pro", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
@@ -6,23 +10,19 @@ indicator("Advanced Bubbles Volume Pro", overlay = true, max_lines_count = 500, 
 // ═══════════════════════════════════════════════════════════════════════════════
 
 var GRP_WINDOW = "⏳ Display Window"
-int last_n_candles = input.int(500, "Draw on Last N Candles", group = GRP_WINDOW, minval = 1, 
-                                 tooltip = "Limits drawing of bubbles, labels, and lines to the most recent N candles to keep history clean.")
+int last_n_candles = input.int(500, "Draw on Last N Candles", group = GRP_WINDOW, minval = 1,
+                                 tooltip = "Limits drawing of bubbles, labels, and lines to the most recent N candles.")
 
 var GRP_BUB = "📊 Volume Bubbles"
-bool  show_bubbles = input.bool(true,  "Show Bubbles",        group = GRP_BUB, inline = "b1")
-float threshold    = input.float(1.5,  "Vol Threshold (σ)",   group = GRP_BUB, inline = "b1", step = 0.1, minval = 0.1, maxval = 7,
-                                 tooltip = "Minimum normalized volume (std devs) to start showing bubbles.")
+bool  show_bubbles = input.bool(true,  "Show Bubbles",       group = GRP_BUB, inline = "b1")
+float threshold    = input.float(1.5,  "Vol Threshold (σ)",  group = GRP_BUB, inline = "b1", step = 0.1, minval = 0.1, maxval = 7,
+                                 tooltip = "Minimum normalised volume (std devs) to start showing bubbles.")
 
-// ── Minimum visible size ───────────────────────────────────────────────────────
-// 0 = tiny (show all)  |  1 = small & above  |  2 = normal & above
-// 3 = large & above    |  4 = huge only
 int min_size = input.int(0, "Min Size to Show",
-                 options = [0, 1, 2, 3, 4],
-                 tooltip = "Hide bubbles below this size tier to reduce chart clutter.\n0 = show all  |  1 = small+  |  2 = normal+  |  3 = large+  |  4 = huge only",
-                 group   = GRP_BUB)
+                 options  = [0, 1, 2, 3, 4],
+                 tooltip  = "Hide bubbles below this tier.\n0=all | 1=small+ | 2=normal+ | 3=large+ | 4=huge only",
+                 group    = GRP_BUB)
 
-// Inline hint label so traders see what they've set without opening settings
 string size_hint = min_size == 0 ? "bubbles: tiny → huge"
                  : min_size == 1 ? "bubbles: small → huge"
                  : min_size == 2 ? "bubbles: normal → huge"
@@ -40,31 +40,33 @@ if barstate.islast
                   size      = size.small)
 
 var GRP_DELTA = "📈 Volume Delta Bias"
-bool  show_delta   = input.bool(true,  "Delta-Colored Bubbles", group = GRP_DELTA,
+bool  show_delta   = input.bool(true, "Delta-Colored Bubbles", group = GRP_DELTA,
                                  tooltip = "Color bubbles green/red based on estimated buy vs sell pressure (close position within candle range).")
-float delta_thresh = input.float(0.1,  "Delta Neutral Zone",    group = GRP_DELTA, step = 0.05, minval = 0, maxval = 0.49,
+float delta_thresh = input.float(0.1, "Delta Neutral Zone",   group = GRP_DELTA, step = 0.05, minval = 0, maxval = 0.49,
                                  tooltip = "Close-position offset from midpoint to be considered neutral (grey).")
 
 var GRP_ABS = "🔵 Absorption Detection"
-bool  show_absorp  = input.bool(true,  "Detect Absorption",  group = GRP_ABS,
-                                 tooltip = "Flags bars with high volume but a tiny body — institutions absorbing supply/demand.")
-float absorp_ratio = input.float(0.2,  "Max Body/Range",     group = GRP_ABS, step = 0.05, minval = 0.05, maxval = 0.5,
-                                 tooltip = "Body-to-range ratio threshold. Lower = more selective (doji-like).")
-color absorp_color = input.color(color.new(#00bfff, 10), "Color", group = GRP_ABS)
+bool  show_absorp     = input.bool(true,  "Detect Absorption",     group = GRP_ABS,
+                                 tooltip = "Flags high-volume bars with a tiny body AND balanced wicks — institutions absorbing supply/demand.")
+float absorp_ratio    = input.float(0.2,  "Max Body/Range",        group = GRP_ABS, step = 0.05, minval = 0.05, maxval = 0.5,
+                                 tooltip = "Body-to-range ratio threshold. Lower = more doji-like, more selective.")
+float absorp_wick_bal = input.float(0.65, "Max Wick Imbalance",    group = GRP_ABS, step = 0.05, minval = 0.1, maxval = 0.95,
+                                 tooltip = "Prevents mislabelling bars with one dominant wick as absorption.\nRatio of longer-to-total-wick. Lower = stricter balance required.\nDefault 0.65: neither wick can be more than 65% of total wick length.")
+color absorp_color    = input.color(color.new(#00bfff, 10), "Color", group = GRP_ABS)
 
 var GRP_EXH = "⚡ Exhaustion Detection"
 bool  show_exhaust = input.bool(true,  "Detect Exhaustion",  group = GRP_EXH,
-                                 tooltip = "Flags high-volume bars where price was strongly rejected — potential reversal signal.")
+                                 tooltip = "Flags high-volume bars where price was strongly rejected — potential reversal signal.\nExhaustion is checked BEFORE absorption and takes priority.")
 float exhaust_wick = input.float(0.60, "Min Wick/Range",     group = GRP_EXH, step = 0.05, minval = 0.3, maxval = 0.95,
                                  tooltip = "Rejection wick must be at least this fraction of the total candle range.")
-color bull_exh_col = input.color(color.new(#00ff88, 15), "Bull Exhaustion", group = GRP_EXH)
-color bear_exh_col = input.color(color.new(#ff3333, 15), "Bear Exhaustion", group = GRP_EXH)
+color bull_exh_col = input.color(color.new(#ff3333, 15), "Bull Exh (Bearish ↓)", group = GRP_EXH)
+color bear_exh_col = input.color(color.new(#00ff88, 15), "Bear Exh (Bullish ↑)", group = GRP_EXH)
 
 var GRP_CLIMAX = "🔥 Volume Climax"
-bool  show_climax  = input.bool(true,  "Detect Climax",       group = GRP_CLIMAX,
+bool  show_climax = input.bool(true,  "Detect Climax",         group = GRP_CLIMAX,
                                  tooltip = "Marks bars with exceptionally extreme volume — potential turning points or major continuation.")
-float climax_mult  = input.float(4.0,  "Climax Threshold (σ)", group = GRP_CLIMAX, step = 0.5, minval = 2.0, maxval = 10.0)
-bool  climax_bg    = input.bool(true,  "Highlight Background", group = GRP_CLIMAX,
+float climax_mult = input.float(4.0,  "Climax Threshold (σ)", group = GRP_CLIMAX, step = 0.5, minval = 2.0, maxval = 10.0)
+bool  climax_bg   = input.bool(true,  "Highlight Background",  group = GRP_CLIMAX,
                                  tooltip = "Paint the chart background on climax bars for quick visual identification.")
 
 var GRP_LVL = "📐 Significant Levels"
@@ -76,34 +78,54 @@ int   levels_qty   = input.int(12,     "Max Lines on Chart", group = GRP_LVL, mi
 //  CORE CALCULATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── N-Candles Window Check ────────────────────────────────────────────────────
 bool in_window = (last_bar_index - bar_index) <= last_n_candles
 
-// ── Normalized volume (z-score against 200-bar rolling StdDev) ───────────────
+// Normalised volume (z-score against 200-bar rolling StdDev)
 float vol_sd   = ta.stdev(volume, 200)
 float norm_vol = vol_sd > 0 ? volume / vol_sd : 0
 
-// ── Candle anatomy ────────────────────────────────────────────────────────────
-float candle_range  = high - low
-float body          = math.abs(close - open)
-float body_ratio    = candle_range > 0 ? body / candle_range : 0
-float upper_wick    = high - math.max(close, open)
-float lower_wick    = math.min(close, open) - low
-float upper_wick_r  = candle_range > 0 ? upper_wick / candle_range : 0
-float lower_wick_r  = candle_range > 0 ? lower_wick / candle_range : 0
+// Candle anatomy
+float candle_range = high - low
+float body         = math.abs(close - open)
+float body_ratio   = candle_range > 0 ? body / candle_range : 0
+float upper_wick   = high - math.max(close, open)
+float lower_wick   = math.min(close, open) - low
+float upper_wick_r = candle_range > 0 ? upper_wick / candle_range : 0
+float lower_wick_r = candle_range > 0 ? lower_wick / candle_range : 0
 
-// Close position in range: 0.0 = at low, 1.0 = at high
+// Close position: 0.0 = at low, 1.0 = at high
 float close_pos  = candle_range > 0 ? (close - low) / candle_range : 0.5
 float delta_bias = close_pos - 0.5  // –0.5 (full bear) → +0.5 (full bull)
 
-// ── Pattern flags ─────────────────────────────────────────────────────────────
-bool is_high_vol        = norm_vol > threshold
-bool is_absorption      = is_high_vol and body_ratio < absorp_ratio and show_absorp
-bool is_bull_exhaustion = is_high_vol and upper_wick_r > exhaust_wick and show_exhaust
-bool is_bear_exhaustion = is_high_vol and lower_wick_r > exhaust_wick and show_exhaust
-bool is_climax          = norm_vol >= climax_mult
+// ── Wick balance (key improvement for absorption) ─────────────────────────────
+// Measures how one-sided the wicks are.
+// A pure doji has equal wicks → balance near 0.5.
+// A shooting star / hammer has one dominant wick → balance near 1.0.
+// We only want absorption on bars where wicks are reasonably balanced (both present).
+float total_wick  = upper_wick + lower_wick
+// Ratio of the longer wick to total wick length (0.5 = perfectly balanced, 1.0 = all one side)
+float wick_imbal  = total_wick > 0 ? math.max(upper_wick, lower_wick) / total_wick : 0.5
 
-// ── Bubble size tiers (Filtered by Window) ────────────────────────────────────
+// ── Pattern flags ─────────────────────────────────────────────────────────────
+bool is_high_vol = norm_vol > threshold
+bool is_climax   = norm_vol >= climax_mult
+
+// Exhaustion: checked FIRST — takes priority over absorption.
+// Bull exhaustion = high-vol bar with massive upper wick (buyers rejected at top → bearish signal → red).
+// Bear exhaustion = high-vol bar with massive lower wick (sellers rejected at bottom → bullish signal → green).
+bool is_bull_exhaustion = show_exhaust and is_high_vol and upper_wick_r >= exhaust_wick
+bool is_bear_exhaustion = show_exhaust and is_high_vol and lower_wick_r >= exhaust_wick
+
+// Absorption: only triggers when NEITHER exhaustion condition is present.
+// Requires: tiny body + balanced wicks (not a hammer/star) + high volume.
+// The wick_imbal guard is the key improvement — prevents one-sided wick bars
+// (which are exhaustion signals) from being misclassified as absorption.
+bool is_exhaustion = is_bull_exhaustion or is_bear_exhaustion
+bool is_absorption = show_absorp and is_high_vol and not is_exhaustion
+                     and body_ratio < absorp_ratio
+                     and wick_imbal  < absorp_wick_bal
+
+// ── Bubble size tiers ─────────────────────────────────────────────────────────
 bool cond_tiny   = show_bubbles and min_size <= 0 and norm_vol > 0              and norm_vol < threshold       and in_window
 bool cond_small  = show_bubbles and min_size <= 1 and norm_vol >= threshold     and norm_vol < threshold + 1.0 and in_window
 bool cond_normal = show_bubbles and min_size <= 2 and norm_vol >= threshold+1.0 and norm_vol < threshold + 2.0 and in_window
@@ -114,7 +136,6 @@ bool cond_huge   = show_bubbles and                   norm_vol >= threshold+3.0 
 //  COLOR SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Delta-aware gradient ──────────────────────────────────────────────────────
 color bull_lo  = color.new(#69f0ae, 50)
 color bull_hi  = color.new(#00c853,  5)
 color bear_lo  = color.new(#ff8a80, 50)
@@ -126,16 +147,16 @@ color delta_col =
      delta_bias < -delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bear_lo, bear_hi) :
                                   neut_col
 
-// ── Base color ────────────────────────────────────────────────────────────────
 color base_col = show_delta
                  ? delta_col
                  : color.from_gradient(norm_vol, 0, 8, color.new(color.green, 80), color.new(color.green, 5))
 
-// ── Priority: pattern signals override base color ─────────────────────────────
+// Priority: Exhaustion → Absorption → base delta color
+// (Exhaustion now wins over absorption — previously absorption could silently override)
 color final_col =
-     is_absorption      ? absorp_color  :
      is_bull_exhaustion ? bull_exh_col  :
      is_bear_exhaustion ? bear_exh_col  :
+     is_absorption      ? absorp_color  :
                           base_col
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -151,43 +172,57 @@ plotshape(cond_large  ? src : na, "", shape.circle, location.absolute, final_col
 plotshape(cond_huge   ? src : na, "", shape.circle, location.absolute, final_col, size = size.huge)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PATTERN LABELS
+//  PATTERN LABELS  (tracked separately from hint_lbl)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+var label[] pattern_labels = array.new<label>()
+var line[]  level_lines    = array.new<line>()
 
 if barstate.isconfirmed and in_window
 
+    label new_lbl = na
+
     if is_absorption
-        label.new(bar_index, high, "A",
+        new_lbl := label.new(bar_index, high, "A",
                   xloc      = xloc.bar_index,
                   yloc      = yloc.price,
                   color     = color.new(absorp_color, 30),
                   style     = label.style_label_down,
                   textcolor = color.white,
                   size      = size.small,
-                  tooltip   = "Absorption — High volume, tiny body.\nInstitutions absorbing supply/demand.\nVol: " + str.tostring(volume, format.volume))
+                  tooltip   = "Absorption — High volume, tiny body, balanced wicks.\n" +
+                              "Body/Range: "    + str.tostring(body_ratio,  "#.##") + "\n" +
+                              "Wick imbalance: "+ str.tostring(wick_imbal,  "#.##") + "\n" +
+                              "Vol: "           + str.tostring(volume, format.volume))
 
-    if is_bull_exhaustion and not is_absorption
-        label.new(bar_index, high, "↑X",
+    // Bull exhaustion: rejected AT THE TOP → bearish → label points down, red
+    if is_bull_exhaustion
+        new_lbl := label.new(bar_index, high, "↓X",
                   xloc      = xloc.bar_index,
                   yloc      = yloc.price,
                   color     = color.new(bull_exh_col, 20),
                   style     = label.style_label_down,
                   textcolor = color.white,
                   size      = size.small,
-                  tooltip   = "Bull Exhaustion — High volume up-bar, but strongly rejected at high.\nPotential reversal or pause.\nVol: " + str.tostring(volume, format.volume))
+                  tooltip   = "Bull Exhaustion — High volume, strongly rejected at the high (bearish).\n" +
+                              "Upper wick/range: " + str.tostring(upper_wick_r, "#.##") + "\n" +
+                              "Vol: " + str.tostring(volume, format.volume))
 
-    if is_bear_exhaustion and not is_absorption
-        label.new(bar_index, low, "↓X",
+    // Bear exhaustion: rejected AT THE BOTTOM → bullish → label points up, green
+    if is_bear_exhaustion and not is_bull_exhaustion
+        new_lbl := label.new(bar_index, low, "↑X",
                   xloc      = xloc.bar_index,
                   yloc      = yloc.price,
                   color     = color.new(bear_exh_col, 20),
                   style     = label.style_label_up,
                   textcolor = color.white,
                   size      = size.small,
-                  tooltip   = "Bear Exhaustion — High volume down-bar, but strongly rejected at low.\nPotential reversal or pause.\nVol: " + str.tostring(volume, format.volume))
+                  tooltip   = "Bear Exhaustion — High volume, strongly rejected at the low (bullish).\n" +
+                              "Lower wick/range: " + str.tostring(lower_wick_r, "#.##") + "\n" +
+                              "Vol: " + str.tostring(volume, format.volume))
 
     if is_climax and show_bubbles
-        label.new(bar_index, src,
+        new_lbl := label.new(bar_index, src,
                   str.tostring(volume, format.volume),
                   xloc      = xloc.bar_index,
                   yloc      = yloc.price,
@@ -196,26 +231,30 @@ if barstate.isconfirmed and in_window
                   textcolor = chart.fg_color,
                   size      = size.small)
 
-// ── Significant level lines ───────────────────────────────────────────────────
-if is_climax and show_levels and in_window
-    line.new(bar_index, src, last_bar_index, src,
+    if not na(new_lbl)
+        array.push(pattern_labels, new_lbl)
+
+// Significant level lines
+if barstate.isconfirmed and is_climax and show_levels and in_window
+    line new_line = line.new(bar_index, src, last_bar_index, src,
              xloc   = xloc.bar_index,
              extend = extend_lines ? extend.right : extend.none,
              color  = final_col,
              style  = line.style_dashed,
              width  = 2)
+    array.push(level_lines, new_line)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  HOUSE-KEEPING
+//  HOUSE-KEEPING  (pattern labels tracked separately — hint_lbl is never pruned)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-if array.size(line.all) > levels_qty
-    line.delete(array.shift(line.all))
+while array.size(level_lines) > levels_qty
+    line.delete(array.shift(level_lines))
 
-if array.size(label.all) > levels_qty * 4
-    label.delete(array.shift(label.all))
+while array.size(pattern_labels) > levels_qty * 4
+    label.delete(array.shift(pattern_labels))
 
-// ── No-volume guard ───────────────────────────────────────────────────────────
+// No-volume guard
 if ta.cum(volume) <= 0 and barstate.islast
     label.new(bar_index, hl2,
               "No Volume Data — switch to a different symbol",
