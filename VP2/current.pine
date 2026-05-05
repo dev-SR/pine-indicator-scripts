@@ -6,7 +6,7 @@ indicator("Daily Volume Profile (Polyline)", overlay=true, max_lines_count=500, 
 // ========================================================================
 grp1 = "Profile Settings"
 sessInput      = input.string("Daily", title="Profile Session", options=["None", "Daily", "New York", "Overnight", "London", "Asia"], group=grp1)
-rowsInput      = input.int(500, title="Number of Rows", group=grp1)
+rowsInput      = input.int(1000, title="Number of Rows", group=grp1)
 vaPercentInput = input.float(68, title="Value Area Volume %", group=grp1)
 widthPercent   = input.float(50, title="Profile Width (%)", group=grp1)
 showProfiles   = input.int(5, title="Show Last N Profiles", minval=1, group=grp1)
@@ -378,7 +378,7 @@ wkVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color"
 wkPocColor   = input.color(color.orange, title="POC Color", group=grpWeek)
 wkVahColor   = input.color(color.red, title="VAH Color", group=grpWeek)
 wkValColor   = input.color(color.green, title="VAL Color", group=grpWeek)
-wkRows       = input.int(500, title="Rows", group=grpWeek)
+wkRows       = input.int(1000, title="Rows", group=grpWeek)
 wkVaPct      = input.float(68, title="VA %", group=grpWeek)
 wkWidth      = input.float(30, title="Width %", group=grpWeek)
 
@@ -390,7 +390,7 @@ nyVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color"
 nyPocColor   = input.color(color.orange, title="POC Color", group=grpNY)
 nyVahColor   = input.color(color.red, title="VAH Color", group=grpNY)
 nyValColor   = input.color(color.green, title="VAL Color", group=grpNY)
-nyRows       = input.int(500, title="Rows", group=grpNY)
+nyRows       = input.int(1000, title="Rows", group=grpNY)
 nyVaPct      = input.float(68, title="VA %", group=grpNY)
 nyWidth      = input.float(30, title="Width %", group=grpNY)
 
@@ -402,7 +402,7 @@ onVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color"
 onPocColor   = input.color(color.orange, title="POC Color", group=grpON)
 onVahColor   = input.color(color.red, title="VAH Color", group=grpON)
 onValColor   = input.color(color.green, title="VAL Color", group=grpON)
-onRows       = input.int(500, title="Rows", group=grpON)
+onRows       = input.int(1000, title="Rows", group=grpON)
 onVaPct      = input.float(68, title="VA %", group=grpON)
 onWidth      = input.float(30, title="Width %", group=grpON)
 
@@ -417,6 +417,7 @@ type ProfileState
     int rowsInput
     float vaPct
     float widthPct
+    int labelOffset
     
     float[] highs
     float[] lows
@@ -433,9 +434,9 @@ type ProfileState
     label vahLabel
     label valLabel
 
-var ProfileState wkState = ProfileState.new("Week", showWk, wkProfColor, wkVaColor, wkPocColor, wkVahColor, wkValColor, wkRows, wkVaPct, wkWidth, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
-var ProfileState nyState = ProfileState.new("NY", showNY, nyProfColor, nyVaColor, nyPocColor, nyVahColor, nyValColor, nyRows, nyVaPct, nyWidth, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
-var ProfileState onState = ProfileState.new("ON", showON, onProfColor, onVaColor, onPocColor, onVahColor, onValColor, onRows, onVaPct, onWidth, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+var ProfileState wkState = ProfileState.new("PW", showWk, wkProfColor, wkVaColor, wkPocColor, wkVahColor, wkValColor, wkRows, wkVaPct, wkWidth, 60, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+var ProfileState nyState = ProfileState.new("PNY", showNY, nyProfColor, nyVaColor, nyPocColor, nyVahColor, nyValColor, nyRows, nyVaPct, nyWidth, 40, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+var ProfileState onState = ProfileState.new("POV", showON, onProfColor, onVaColor, onPocColor, onVahColor, onValColor, onRows, onVaPct, onWidth, 20, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
 
 bool inWeek = true
 bool isNewWeek = ta.change(time("W")) != 0
@@ -549,9 +550,9 @@ method processSession(ProfileState state, bool inSes, bool isNewSes) =>
                 string hText = state.name + " VAH (" + str.tostring(vahPrice, format.mintick) + ")"
                 string lText = state.name + " VAL (" + str.tostring(valPrice, format.mintick) + ")"
                 
-                state.pocLabel := label.new(bar_index + 5, pocPrice, pText, color=color.new(state.pocColor, 90), textcolor=state.pocColor, style=label.style_label_lower_left, size=size.small)
-                state.vahLabel := label.new(bar_index + 5, vahPrice, hText, color=color.new(state.vahColor, 90), textcolor=state.vahColor, style=label.style_label_lower_left, size=size.small)
-                state.valLabel := label.new(bar_index + 5, valPrice, lText, color=color.new(state.valColor, 90), textcolor=state.valColor, style=label.style_label_lower_left, size=size.small)
+                state.pocLabel := label.new(bar_index + state.labelOffset, pocPrice, pText, color=color.new(state.pocColor, 90), textcolor=state.pocColor, style=label.style_label_lower_left, size=size.small)
+                state.vahLabel := label.new(bar_index + state.labelOffset, vahPrice, hText, color=color.new(state.vahColor, 90), textcolor=state.vahColor, style=label.style_label_lower_left, size=size.small)
+                state.valLabel := label.new(bar_index + state.labelOffset, valPrice, lText, color=color.new(state.valColor, 90), textcolor=state.valColor, style=label.style_label_lower_left, size=size.small)
                 
         array.clear(state.highs)
         array.clear(state.lows)
@@ -565,11 +566,11 @@ method processSession(ProfileState state, bool inSes, bool isNewSes) =>
         state.endIndex := bar_index
         
     if not na(state.pocLabel)
-        label.set_x(state.pocLabel, bar_index + 5)
+        label.set_x(state.pocLabel, bar_index + state.labelOffset)
     if not na(state.vahLabel)
-        label.set_x(state.vahLabel, bar_index + 5)
+        label.set_x(state.vahLabel, bar_index + state.labelOffset)
     if not na(state.valLabel)
-        label.set_x(state.valLabel, bar_index + 5)
+        label.set_x(state.valLabel, bar_index + state.labelOffset)
 
 wkState.processSession(inWeek, isNewWeek)
 nyState.processSession(inNY, isNewNY)
