@@ -1,0 +1,576 @@
+//@version=5
+indicator("Daily Volume Profile (Polyline)", overlay=true, max_lines_count=500, max_polylines_count=100)
+
+// ========================================================================
+// INPUTS
+// ========================================================================
+grp1 = "Profile Settings"
+sessInput      = input.string("Daily", title="Profile Session", options=["None", "Daily", "New York", "Overnight", "London", "Asia"], group=grp1)
+rowsInput      = input.int(500, title="Number of Rows", group=grp1)
+vaPercentInput = input.float(68, title="Value Area Volume %", group=grp1)
+widthPercent   = input.float(50, title="Profile Width (%)", group=grp1)
+showProfiles   = input.int(5, title="Show Last N Profiles", minval=1, group=grp1)
+
+grp2 = "Colors"
+profColor      = input.color(color.new(color.blue, 0), title="Profile Color", group=grp2)
+vahColor       = input.color(color.red, title="VAH Color", group=grp2)
+pocColor       = input.color(color.orange, title="POC Color", group=grp2)
+valColor       = input.color(color.green, title="VAL Color", group=grp2)
+hlColor        = input.color(color.gray, title="High/Low Color", group=grp2)
+vaProfColor    = input.color(color.new(color.purple, 0), title="VA Profile Color", group=grp2)
+
+grp3 = "Value Area Fill"
+fillVa         = input.bool(true, title="Fill Value Area", group=grp3)
+fillTransparency = input.int(85, title="VA Fill Transparency", minval=0, maxval=100, group=grp3)
+
+grp4 = "Custom Sessions"
+nySession = input.string("0930-1600", title="New York Session", group=grp4)
+onSession = input.string("1600-0930", title="Overnight Session", group=grp4)
+lnSession = input.string("0300-1130", title="London Session", group=grp4)
+asSession = input.string("1800-0300", title="Asia Session", group=grp4)
+tzInput   = input.string("America/New_York", title="Timezone", group=grp4)
+
+// ========================================================================
+// TYPE & VARIABLES
+// ========================================================================
+type ProfileGfx
+    polyline fullPoly
+    polyline vaPoly
+    line     pocLine
+    line     vahLine
+    line     valLine
+    line     highLine
+    line     lowLine
+
+var array<ProfileGfx> history = array.new<ProfileGfx>(0)
+
+var float[] barHighs = array.new_float()
+var float[] barLows  = array.new_float()
+var float[] barVols  = array.new_float()
+var int     dayStartIndex = bar_index
+
+var polyline devFullPoly = na
+var polyline devVaPoly   = na
+var line     devPocLine  = na
+var line     devVahLine  = na
+var line     devValLine  = na
+var line     devHighLine = na
+var line     devLowLine  = na
+
+getSessionString() =>
+    switch sessInput
+        "New York"  => nySession
+        "Overnight" => onSession
+        "London"    => lnSession
+        "Asia"      => asSession
+        => "0000-0000"
+
+isDaily = sessInput == "Daily"
+isNone  = sessInput == "None"
+sessionStr = getSessionString()
+
+bool inSession = isNone ? false : (isDaily ? true : not na(time(timeframe.period, sessionStr, tzInput)))
+bool isNewSession = isNone ? false : (isDaily ? (ta.change(time("D")) != 0) : (inSession and not inSession[1]))
+
+// ========================================================================
+// FUNCTIONS
+// ========================================================================
+deleteProfileGfx(ProfileGfx p) =>
+    if not na(p.fullPoly)
+        polyline.delete(p.fullPoly)
+    if not na(p.vaPoly)
+        polyline.delete(p.vaPoly)
+    if not na(p.pocLine)
+        line.delete(p.pocLine)
+    if not na(p.vahLine)
+        line.delete(p.vahLine)
+    if not na(p.valLine)
+        line.delete(p.valLine)
+    if not na(p.highLine)
+        line.delete(p.highLine)
+    if not na(p.lowLine)
+        line.delete(p.lowLine)
+
+// ========================================================================
+// COMPLETED PROFILE DRAWING
+// ========================================================================
+drawCompletedProfile(int startIdx, int endIdx, float dHigh, float dLow, float rowSize, float[] rowVols, float maxVol, float pocPrice, float vahPrice, float valPrice, int upperRow, int lowerRow) =>
+    int dayLength     = endIdx - startIdx
+    float maxWidthBars = dayLength * (widthPercent / 100.0)
+
+    // --- Full profile polyline ---
+    chart.point[] points = array.new<chart.point>()
+    array.push(points, chart.point.from_index(startIdx, dLow))
+
+    for j = 0 to rowsInput - 1
+        float price = dLow + (j * rowSize)
+        float vol   = array.get(rowVols, j)
+        int xOffset = math.round((vol / maxVol) * maxWidthBars)
+        array.push(points, chart.point.from_index(startIdx + xOffset, price))
+
+    array.push(points, chart.point.from_index(startIdx, dHigh))
+    array.push(points, chart.point.from_index(startIdx, dLow))
+
+    polyline fullPoly = polyline.new(points, line_color=profColor, closed=true)
+
+    // --- VA polyline ---
+    polyline vaPoly = na
+    if upperRow >= lowerRow
+        chart.point[] vaPoints = array.new<chart.point>()
+        array.push(vaPoints, chart.point.from_index(startIdx, valPrice))
+
+        for j = lowerRow to upperRow
+            float price = dLow + (j * rowSize)
+            float vol   = array.get(rowVols, j)
+            int xOffset = math.round((vol / maxVol) * maxWidthBars)
+            array.push(vaPoints, chart.point.from_index(startIdx + xOffset, price))
+
+        array.push(vaPoints, chart.point.from_index(startIdx, vahPrice))
+        array.push(vaPoints, chart.point.from_index(startIdx, valPrice))
+
+        vaPoly := polyline.new(vaPoints, line_color=vaProfColor, closed=true, fill_color=fillVa ? color.new(vaProfColor, fillTransparency) : na)
+
+    // --- Levels ---
+    line pocLine  = line.new(startIdx, pocPrice, endIdx, pocPrice, color=pocColor, width=2)
+    line vahLine  = line.new(startIdx, vahPrice, endIdx, vahPrice, color=vahColor, style=line.style_dotted)
+    line valLine  = line.new(startIdx, valPrice, endIdx, valPrice, color=valColor, style=line.style_dotted)
+    line highLine = line.new(startIdx, dHigh,   endIdx, dHigh,   color=hlColor,  style=line.style_dashed)
+    line lowLine  = line.new(startIdx, dLow,    endIdx, dLow,    color=hlColor,  style=line.style_dashed)
+
+    ProfileGfx.new(fullPoly, vaPoly, pocLine, vahLine, valLine, highLine, lowLine)
+
+// ========================================================================
+// NEW DAY: FINALIZE PREVIOUS PROFILE
+// ========================================================================
+if isNewSession
+    if array.size(barHighs) > 0
+        float dHigh   = array.max(barHighs)
+        float dLow    = array.min(barLows)
+        float rowSize = (dHigh - dLow) / rowsInput
+
+        if rowSize > 0
+            float[] rowVols = array.new_float(rowsInput, 0.0)
+            float totalVol  = 0.0
+
+            for i = 0 to array.size(barHighs) - 1
+                float h = array.get(barHighs, i)
+                float l = array.get(barLows, i)
+                float v = array.get(barVols, i)
+
+                int startRow = math.max(0, math.floor((l - dLow) / rowSize))
+                int endRow   = math.min(rowsInput - 1, math.floor((h - dLow) / rowSize))
+                int rowsSpanned = endRow - startRow + 1
+                float volPerRow = rowsSpanned > 0 ? v / rowsSpanned : 0
+
+                for j = startRow to endRow
+                    array.set(rowVols, j, array.get(rowVols, j) + volPerRow)
+                    totalVol += volPerRow
+
+            // POC
+            float maxVol = 0.0
+            int   pocRow = 0
+            for j = 0 to rowsInput - 1
+                float vol = array.get(rowVols, j)
+                if vol > maxVol
+                    maxVol := vol
+                    pocRow := j
+
+            // Value Area
+            float vaTargetVol  = totalVol * (vaPercentInput / 100.0)
+            float currentVaVol = array.get(rowVols, pocRow)
+            int upperRow = pocRow
+            int lowerRow = pocRow
+
+            while currentVaVol < vaTargetVol and (upperRow < rowsInput - 1 or lowerRow > 0)
+                float upperVol = upperRow < rowsInput - 1 ? array.get(rowVols, upperRow + 1) : -1.0
+                float lowerVol = lowerRow > 0          ? array.get(rowVols, lowerRow - 1) : -1.0
+
+                if upperVol >= lowerVol and upperVol != -1.0
+                    upperRow += 1
+                    currentVaVol += upperVol
+                else if lowerVol != -1.0
+                    lowerRow -= 1
+                    currentVaVol += lowerVol
+
+            float pocPrice = dLow + (pocRow * rowSize) + (rowSize / 2)
+            float vahPrice = dLow + (upperRow * rowSize) + (rowSize / 2)
+            float valPrice = dLow + (lowerRow * rowSize) + (rowSize / 2)
+
+            ProfileGfx p = drawCompletedProfile(dayStartIndex, bar_index, dHigh, dLow, rowSize, rowVols, maxVol, pocPrice, vahPrice, valPrice, upperRow, lowerRow)
+            array.push(history, p)
+
+            while array.size(history) > (showProfiles - 1)
+                old = array.shift(history)
+                deleteProfileGfx(old)
+
+    // Reset for new day
+    array.clear(barHighs)
+    array.clear(barLows)
+    array.clear(barVols)
+    dayStartIndex := bar_index
+
+    // Clear developing graphics
+    if not na(devFullPoly)
+        polyline.delete(devFullPoly)
+        devFullPoly := na
+    if not na(devVaPoly)
+        polyline.delete(devVaPoly)
+        devVaPoly := na
+    if not na(devPocLine)
+        line.delete(devPocLine)
+        devPocLine := na
+    if not na(devVahLine)
+        line.delete(devVahLine)
+        devVahLine := na
+    if not na(devValLine)
+        line.delete(devValLine)
+        devValLine := na
+    if not na(devHighLine)
+        line.delete(devHighLine)
+        devHighLine := na
+    if not na(devLowLine)
+        line.delete(devLowLine)
+        devLowLine := na
+
+// ========================================================================
+// ACCUMULATE CURRENT BAR
+// ========================================================================
+if inSession
+    array.push(barHighs, high)
+    array.push(barLows, low)
+    array.push(barVols, volume)
+
+// ========================================================================
+// DEVELOPING PROFILE (drawn every bar)
+// ========================================================================
+if inSession and array.size(barHighs) > 0
+    float currDHigh   = array.max(barHighs)
+    float currDLow    = array.min(barLows)
+    float currRowSize = (currDHigh - currDLow) / rowsInput
+
+    if currRowSize > 0
+        float[] currRowVols = array.new_float(rowsInput, 0.0)
+        float currTotalVol  = 0.0
+
+        for i = 0 to array.size(barHighs) - 1
+            float h = array.get(barHighs, i)
+            float l = array.get(barLows, i)
+            float v = array.get(barVols, i)
+
+            int startRow = math.max(0, math.floor((l - currDLow) / currRowSize))
+            int endRow   = math.min(rowsInput - 1, math.floor((h - currDLow) / currRowSize))
+            int rowsSpanned = endRow - startRow + 1
+            float volPerRow = rowsSpanned > 0 ? v / rowsSpanned : 0
+
+            for j = startRow to endRow
+                array.set(currRowVols, j, array.get(currRowVols, j) + volPerRow)
+                currTotalVol += volPerRow
+
+        // POC
+        float currMaxVol = 0.0
+        int   currPocRow = 0
+        for j = 0 to rowsInput - 1
+            float vol = array.get(currRowVols, j)
+            if vol > currMaxVol
+                currMaxVol := vol
+                currPocRow := j
+
+        // Value Area
+        float currVaTargetVol  = currTotalVol * (vaPercentInput / 100.0)
+        float currCurrentVaVol = array.get(currRowVols, currPocRow)
+        int currUpperRow = currPocRow
+        int currLowerRow = currPocRow
+
+        while currCurrentVaVol < currVaTargetVol and (currUpperRow < rowsInput - 1 or currLowerRow > 0)
+            float upperVol = currUpperRow < rowsInput - 1 ? array.get(currRowVols, currUpperRow + 1) : -1.0
+            float lowerVol = currLowerRow > 0          ? array.get(currRowVols, currLowerRow - 1) : -1.0
+
+            if upperVol >= lowerVol and upperVol != -1.0
+                currUpperRow += 1
+                currCurrentVaVol += upperVol
+            else if lowerVol != -1.0
+                currLowerRow -= 1
+                currCurrentVaVol += lowerVol
+
+        float currPocPrice = currDLow + (currPocRow * currRowSize) + (currRowSize / 2)
+        float currVahPrice = currDLow + (currUpperRow * currRowSize) + (currRowSize / 2)
+        float currValPrice = currDLow + (currLowerRow * currRowSize) + (currRowSize / 2)
+
+        int   dayLength     = bar_index - dayStartIndex + 1
+        float maxWidthBars  = dayLength * (widthPercent / 100.0)
+
+        // --- Full profile points ---
+        chart.point[] points = array.new<chart.point>()
+        array.push(points, chart.point.from_index(dayStartIndex, currDLow))
+
+        for j = 0 to rowsInput - 1
+            float price = currDLow + (j * currRowSize)
+            float vol   = array.get(currRowVols, j)
+            int xOffset = math.round((vol / currMaxVol) * maxWidthBars)
+            array.push(points, chart.point.from_index(dayStartIndex + xOffset, price))
+
+        array.push(points, chart.point.from_index(dayStartIndex, currDHigh))
+        array.push(points, chart.point.from_index(dayStartIndex, currDLow))
+
+        if not na(devFullPoly)
+            polyline.delete(devFullPoly)
+        devFullPoly := polyline.new(points, line_color=profColor, closed=true)
+
+        // --- VA polyline ---
+        if currUpperRow >= currLowerRow
+            chart.point[] vaPoints = array.new<chart.point>()
+            array.push(vaPoints, chart.point.from_index(dayStartIndex, currValPrice))
+
+            for j = currLowerRow to currUpperRow
+                float price = currDLow + (j * currRowSize)
+                float vol   = array.get(currRowVols, j)
+                int xOffset = math.round((vol / currMaxVol) * maxWidthBars)
+                array.push(vaPoints, chart.point.from_index(dayStartIndex + xOffset, price))
+
+            array.push(vaPoints, chart.point.from_index(dayStartIndex, currVahPrice))
+            array.push(vaPoints, chart.point.from_index(dayStartIndex, currValPrice))
+
+            if not na(devVaPoly)
+                polyline.delete(devVaPoly)
+            devVaPoly := polyline.new(vaPoints, line_color=vaProfColor, closed=true, fill_color=fillVa ? color.new(vaProfColor, fillTransparency) : na)
+        else if not na(devVaPoly)
+            polyline.delete(devVaPoly)
+            devVaPoly := na
+
+        // --- Update / create lines ---
+        if na(devPocLine)
+            devPocLine := line.new(dayStartIndex, currPocPrice, bar_index, currPocPrice, color=pocColor, width=2)
+        else
+            line.set_xy1(devPocLine, dayStartIndex, currPocPrice)
+            line.set_xy2(devPocLine, bar_index, currPocPrice)
+
+        if na(devVahLine)
+            devVahLine := line.new(dayStartIndex, currVahPrice, bar_index, currVahPrice, color=vahColor, style=line.style_dotted)
+        else
+            line.set_xy1(devVahLine, dayStartIndex, currVahPrice)
+            line.set_xy2(devVahLine, bar_index, currVahPrice)
+
+        if na(devValLine)
+            devValLine := line.new(dayStartIndex, currValPrice, bar_index, currValPrice, color=valColor, style=line.style_dotted)
+        else
+            line.set_xy1(devValLine, dayStartIndex, currValPrice)
+            line.set_xy2(devValLine, bar_index, currValPrice)
+
+        if na(devHighLine)
+            devHighLine := line.new(dayStartIndex, currDHigh, bar_index, currDHigh, color=hlColor, style=line.style_dashed)
+        else
+            line.set_xy1(devHighLine, dayStartIndex, currDHigh)
+            line.set_xy2(devHighLine, bar_index, currDHigh)
+
+        if na(devLowLine)
+            devLowLine := line.new(dayStartIndex, currDLow, bar_index, currDLow, color=hlColor, style=line.style_dashed)
+        else
+            line.set_xy1(devLowLine, dayStartIndex, currDLow)
+            line.set_xy2(devLowLine, bar_index, currDLow)
+
+// ========================================================================
+// PREVIOUS PROFILES EXTRA
+// ========================================================================
+grpWeek = "Previous Week"
+showWk       = input.bool(true, title="Show Previous Week", group=grpWeek)
+wkProfColor  = input.color(color.new(color.blue, 70), title="Profile Color", group=grpWeek)
+wkVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color", group=grpWeek)
+wkPocColor   = input.color(color.orange, title="POC Color", group=grpWeek)
+wkVahColor   = input.color(color.red, title="VAH Color", group=grpWeek)
+wkValColor   = input.color(color.green, title="VAL Color", group=grpWeek)
+wkRows       = input.int(500, title="Rows", group=grpWeek)
+wkVaPct      = input.float(68, title="VA %", group=grpWeek)
+wkWidth      = input.float(30, title="Width %", group=grpWeek)
+
+grpNY = "Previous NY RTH"
+showNY       = input.bool(true, title="Show Previous NY RTH", group=grpNY)
+nySessionStr = input.string("0930-1600", title="NY Session", group=grpNY)
+nyProfColor  = input.color(color.new(color.blue, 70), title="Profile Color", group=grpNY)
+nyVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color", group=grpNY)
+nyPocColor   = input.color(color.orange, title="POC Color", group=grpNY)
+nyVahColor   = input.color(color.red, title="VAH Color", group=grpNY)
+nyValColor   = input.color(color.green, title="VAL Color", group=grpNY)
+nyRows       = input.int(500, title="Rows", group=grpNY)
+nyVaPct      = input.float(68, title="VA %", group=grpNY)
+nyWidth      = input.float(30, title="Width %", group=grpNY)
+
+grpON = "Previous Overnight"
+showON       = input.bool(true, title="Show Previous Overnight", group=grpON)
+onSessionStr = input.string("1600-0930", title="ON Session", group=grpON)
+onProfColor  = input.color(color.new(color.blue, 70), title="Profile Color", group=grpON)
+onVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color", group=grpON)
+onPocColor   = input.color(color.orange, title="POC Color", group=grpON)
+onVahColor   = input.color(color.red, title="VAH Color", group=grpON)
+onValColor   = input.color(color.green, title="VAL Color", group=grpON)
+onRows       = input.int(500, title="Rows", group=grpON)
+onVaPct      = input.float(68, title="VA %", group=grpON)
+onWidth      = input.float(30, title="Width %", group=grpON)
+
+type ProfileState
+    string name
+    bool show
+    color profColor
+    color vaColor
+    color pocColor
+    color vahColor
+    color valColor
+    int rowsInput
+    float vaPct
+    float widthPct
+    
+    float[] highs
+    float[] lows
+    float[] vols
+    int startIndex
+    int endIndex
+    
+    polyline fullPoly
+    polyline vaPoly
+    line pocLine
+    line vahLine
+    line valLine
+    label pocLabel
+    label vahLabel
+    label valLabel
+
+var ProfileState wkState = ProfileState.new("Week", showWk, wkProfColor, wkVaColor, wkPocColor, wkVahColor, wkValColor, wkRows, wkVaPct, wkWidth, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+var ProfileState nyState = ProfileState.new("NY", showNY, nyProfColor, nyVaColor, nyPocColor, nyVahColor, nyValColor, nyRows, nyVaPct, nyWidth, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+var ProfileState onState = ProfileState.new("ON", showON, onProfColor, onVaColor, onPocColor, onVahColor, onValColor, onRows, onVaPct, onWidth, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+
+bool inWeek = true
+bool isNewWeek = ta.change(time("W")) != 0
+
+bool inNY = not na(time(timeframe.period, nySessionStr, tzInput))
+bool isNewNY = inNY and not inNY[1]
+
+bool inON = not na(time(timeframe.period, onSessionStr, tzInput))
+bool isNewON = inON and not inON[1]
+
+method processSession(ProfileState state, bool inSes, bool isNewSes) =>
+    if isNewSes
+        if state.show and array.size(state.highs) > 0
+            float dHigh = array.max(state.highs)
+            float dLow  = array.min(state.lows)
+            float rowSize = (dHigh - dLow) / state.rowsInput
+            
+            if rowSize > 0
+                float[] rowVols = array.new_float(state.rowsInput, 0.0)
+                float totalVol = 0.0
+                
+                for i = 0 to array.size(state.highs) - 1
+                    float h = array.get(state.highs, i)
+                    float l = array.get(state.lows, i)
+                    float v = array.get(state.vols, i)
+                    
+                    int startRow = math.max(0, math.floor((l - dLow) / rowSize))
+                    int endRow   = math.min(state.rowsInput - 1, math.floor((h - dLow) / rowSize))
+                    int rowsSpanned = endRow - startRow + 1
+                    float volPerRow = rowsSpanned > 0 ? v / rowsSpanned : 0
+                    
+                    for j = startRow to endRow
+                        array.set(rowVols, j, array.get(rowVols, j) + volPerRow)
+                        totalVol += volPerRow
+                
+                float maxVol = 0.0
+                int pocRow = 0
+                for j = 0 to state.rowsInput - 1
+                    float vol = array.get(rowVols, j)
+                    if vol > maxVol
+                        maxVol := vol
+                        pocRow := j
+                
+                float vaTargetVol = totalVol * (state.vaPct / 100.0)
+                float currentVaVol = array.get(rowVols, pocRow)
+                int upperRow = pocRow
+                int lowerRow = pocRow
+                
+                while currentVaVol < vaTargetVol and (upperRow < state.rowsInput - 1 or lowerRow > 0)
+                    float upperVol = upperRow < state.rowsInput - 1 ? array.get(rowVols, upperRow + 1) : -1.0
+                    float lowerVol = lowerRow > 0 ? array.get(rowVols, lowerRow - 1) : -1.0
+                    if upperVol >= lowerVol and upperVol != -1.0
+                        upperRow += 1
+                        currentVaVol += upperVol
+                    else if lowerVol != -1.0
+                        lowerRow -= 1
+                        currentVaVol += lowerVol
+                
+                float pocPrice = dLow + (pocRow * rowSize) + (rowSize / 2)
+                float vahPrice = dLow + (upperRow * rowSize) + (rowSize / 2)
+                float valPrice = dLow + (lowerRow * rowSize) + (rowSize / 2)
+                
+                int dayLength = state.endIndex - state.startIndex + 1
+                float maxWidthBars = dayLength * (state.widthPct / 100.0)
+                
+                if not na(state.fullPoly)
+                    polyline.delete(state.fullPoly)
+                if not na(state.vaPoly)
+                    polyline.delete(state.vaPoly)
+                if not na(state.pocLine)
+                    line.delete(state.pocLine)
+                if not na(state.vahLine)
+                    line.delete(state.vahLine)
+                if not na(state.valLine)
+                    line.delete(state.valLine)
+                if not na(state.pocLabel)
+                    label.delete(state.pocLabel)
+                if not na(state.vahLabel)
+                    label.delete(state.vahLabel)
+                if not na(state.valLabel)
+                    label.delete(state.valLabel)
+                
+                chart.point[] points = array.new<chart.point>()
+                array.push(points, chart.point.from_index(state.startIndex, dLow))
+                for j = 0 to state.rowsInput - 1
+                    float price = dLow + (j * rowSize)
+                    float vol = array.get(rowVols, j)
+                    int xOffset = math.round((vol / maxVol) * maxWidthBars)
+                    array.push(points, chart.point.from_index(state.startIndex + xOffset, price))
+                array.push(points, chart.point.from_index(state.startIndex, dHigh))
+                array.push(points, chart.point.from_index(state.startIndex, dLow))
+                state.fullPoly := polyline.new(points, line_color=state.profColor, closed=true)
+                
+                if upperRow >= lowerRow
+                    chart.point[] vaPoints = array.new<chart.point>()
+                    array.push(vaPoints, chart.point.from_index(state.startIndex, valPrice))
+                    for j = lowerRow to upperRow
+                        float price = dLow + (j * rowSize)
+                        float vol = array.get(rowVols, j)
+                        int xOffset = math.round((vol / maxVol) * maxWidthBars)
+                        array.push(vaPoints, chart.point.from_index(state.startIndex + xOffset, price))
+                    array.push(vaPoints, chart.point.from_index(state.startIndex, vahPrice))
+                    array.push(vaPoints, chart.point.from_index(state.startIndex, valPrice))
+                    state.vaPoly := polyline.new(vaPoints, line_color=state.vaColor, closed=true, fill_color=color.new(state.vaColor, 85))
+                
+                state.pocLine := line.new(state.startIndex, pocPrice, bar_index, pocPrice, color=state.pocColor, width=2, extend=extend.right)
+                state.vahLine := line.new(state.startIndex, vahPrice, bar_index, vahPrice, color=state.vahColor, width=1, style=line.style_dashed, extend=extend.right)
+                state.valLine := line.new(state.startIndex, valPrice, bar_index, valPrice, color=state.valColor, width=1, style=line.style_dashed, extend=extend.right)
+                
+                string pText = state.name + " POC (" + str.tostring(pocPrice, format.mintick) + ")"
+                string hText = state.name + " VAH (" + str.tostring(vahPrice, format.mintick) + ")"
+                string lText = state.name + " VAL (" + str.tostring(valPrice, format.mintick) + ")"
+                
+                state.pocLabel := label.new(bar_index + 5, pocPrice, pText, color=color.new(color.white, 100), textcolor=state.pocColor, style=label.style_label_left, size=size.small)
+                state.vahLabel := label.new(bar_index + 5, vahPrice, hText, color=color.new(color.white, 100), textcolor=state.vahColor, style=label.style_label_left, size=size.small)
+                state.valLabel := label.new(bar_index + 5, valPrice, lText, color=color.new(color.white, 100), textcolor=state.valColor, style=label.style_label_left, size=size.small)
+                
+        array.clear(state.highs)
+        array.clear(state.lows)
+        array.clear(state.vols)
+        state.startIndex := bar_index
+
+    if inSes
+        array.push(state.highs, high)
+        array.push(state.lows, low)
+        array.push(state.vols, volume)
+        state.endIndex := bar_index
+        
+    if not na(state.pocLabel)
+        label.set_x(state.pocLabel, bar_index + 5)
+    if not na(state.vahLabel)
+        label.set_x(state.vahLabel, bar_index + 5)
+    if not na(state.valLabel)
+        label.set_x(state.valLabel, bar_index + 5)
+
+wkState.processSession(inWeek, isNewWeek)
+nyState.processSession(inNY, isNewNY)
+onState.processSession(inON, isNewON)
