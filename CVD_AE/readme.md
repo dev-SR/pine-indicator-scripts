@@ -215,3 +215,12 @@ The Counter-Trend Warning: If you are long and see a Bearish Exhaustion (EXH) la
 
 The Reversal Entry: Look for Exhaustion at major support or resistance levels for precise "sniper" entries against the exhausted trend.
 Protected script
+
+Insort:
+
+| **Market Side** | **Price Action** | **CVD Action** | **Interpretation**        |
+| --------------- | ---------------- | -------------- | ------------------------- |
+| 🟢 Bullish       | Lower Low        | Higher Low     | Exhausted Sellers         |
+| 🟢 Bullish       | Higher Low       | Lower Low      | Selling Pressure Absorbed |
+| 🔴 Bearish       | Higher High      | Lower High     | Exhausted Buyers          |
+| 🔴 Bearish       | Lower High       | Higher High    | Buying Pressure Absorbed  |
