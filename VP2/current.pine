@@ -1,23 +1,23 @@
 //@version=5
-indicator("Daily Volume Profile (Polyline)", overlay=true, max_lines_count=500, max_polylines_count=100)
+indicator("Daily Volume Profile (Polyline)", overlay=true, max_lines_count=500, max_polylines_count=100, max_boxes_count=500)
 
 // ========================================================================
 // INPUTS
 // ========================================================================
 grp1 = "Profile Settings"
-sessInput      = input.string("Daily", title="Profile Session", options=["None", "Daily", "New York", "Overnight", "London", "Asia"], group=grp1)
+sessInput      = input.string("None", title="Profile Session", options=["None", "Daily", "New York", "Overnight", "London", "Asia"], group=grp1)
 rowsInput      = input.int(1000, title="Number of Rows", group=grp1)
 vaPercentInput = input.float(68, title="Value Area Volume %", group=grp1)
 widthPercent   = input.float(50, title="Profile Width (%)", group=grp1)
 showProfiles   = input.int(5, title="Show Last N Profiles", minval=1, group=grp1)
 
 grp2 = "Colors"
-profColor      = input.color(color.new(color.blue, 0), title="Profile Color", group=grp2)
+profColor      = input.color(color.new(#747474, 0), title="Profile Color", group=grp2)
+vaProfColor    = input.color(color.new(#ffffff, 18), title="VA Profile Color", group=grp2)
 vahColor       = input.color(color.red, title="VAH Color", group=grp2)
 pocColor       = input.color(color.orange, title="POC Color", group=grp2)
 valColor       = input.color(color.green, title="VAL Color", group=grp2)
 hlColor        = input.color(color.gray, title="High/Low Color", group=grp2)
-vaProfColor    = input.color(color.new(color.purple, 0), title="VA Profile Color", group=grp2)
 
 grp3 = "Value Area Fill"
 fillVa         = input.bool(true, title="Fill Value Area", group=grp3)
@@ -385,8 +385,8 @@ wkWidth      = input.float(30, title="Width %", group=grpWeek)
 grpNY = "Previous NY RTH"
 showNY       = input.bool(true, title="Show Previous NY RTH", group=grpNY)
 nySessionStr = input.string("0930-1600", title="NY Session", group=grpNY)
-nyProfColor  = input.color(color.new(color.blue, 70), title="Profile Color", group=grpNY)
-nyVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color", group=grpNY)
+nyProfColor  = input.color(color.new(color.blue,70), title="Profile Color", group=grpNY)
+nyVaColor    = input.color(color.new(color.blue, 30), title="VA Profile Color", group=grpNY)
 nyPocColor   = input.color(color.orange, title="POC Color", group=grpNY)
 nyVahColor   = input.color(color.red, title="VAH Color", group=grpNY)
 nyValColor   = input.color(color.green, title="VAL Color", group=grpNY)
@@ -397,8 +397,8 @@ nyWidth      = input.float(30, title="Width %", group=grpNY)
 grpON = "Previous Overnight"
 showON       = input.bool(true, title="Show Previous Overnight", group=grpON)
 onSessionStr = input.string("1600-0930", title="ON Session", group=grpON)
-onProfColor  = input.color(color.new(color.blue, 70), title="Profile Color", group=grpON)
-onVaColor    = input.color(color.new(color.purple, 70), title="VA Profile Color", group=grpON)
+onProfColor  = input.color(color.new(color.purple, 70), title="Profile Color", group=grpON)
+onVaColor    = input.color(color.new(color.purple, 30), title="VA Profile Color", group=grpON)
 onPocColor   = input.color(color.orange, title="POC Color", group=grpON)
 onVahColor   = input.color(color.red, title="VAH Color", group=grpON)
 onValColor   = input.color(color.green, title="VAL Color", group=grpON)
@@ -440,15 +440,18 @@ var ProfileState onState = ProfileState.new("POV", showON, onProfColor, onVaColo
 
 bool inWeek = true
 bool isNewWeek = ta.change(time("W")) != 0
+bool isEndWeek = isNewWeek
 
 bool inNY = not na(time(timeframe.period, nySessionStr, tzInput))
 bool isNewNY = inNY and not inNY[1]
+bool isEndNY = not inNY and inNY[1]
 
 bool inON = not na(time(timeframe.period, onSessionStr, tzInput))
 bool isNewON = inON and not inON[1]
+bool isEndON = not inON and inON[1]
 
-method processSession(ProfileState state, bool inSes, bool isNewSes) =>
-    if isNewSes
+method processSession(ProfileState state, bool inSes, bool isNewSes, bool isEndSes) =>
+    if isEndSes
         if state.show and array.size(state.highs) > 0
             float dHigh = array.max(state.highs)
             float dLow  = array.min(state.lows)
@@ -550,14 +553,19 @@ method processSession(ProfileState state, bool inSes, bool isNewSes) =>
                 string hText = state.name + " VAH (" + str.tostring(vahPrice, format.mintick) + ")"
                 string lText = state.name + " VAL (" + str.tostring(valPrice, format.mintick) + ")"
                 
-                state.pocLabel := label.new(bar_index + state.labelOffset, pocPrice, pText, color=color.new(state.pocColor, 90), textcolor=state.pocColor, style=label.style_label_lower_left, size=size.small)
-                state.vahLabel := label.new(bar_index + state.labelOffset, vahPrice, hText, color=color.new(state.vahColor, 90), textcolor=state.vahColor, style=label.style_label_lower_left, size=size.small)
-                state.valLabel := label.new(bar_index + state.labelOffset, valPrice, lText, color=color.new(state.valColor, 90), textcolor=state.valColor, style=label.style_label_lower_left, size=size.small)
+                state.pocLabel := label.new(bar_index + state.labelOffset, pocPrice, pText, color=color.new(state.pocColor, 92), textcolor=state.pocColor, style=label.style_label_lower_left, size=size.small)
+                state.vahLabel := label.new(bar_index + state.labelOffset, vahPrice, hText, color=color.new(state.vahColor, 92), textcolor=state.vahColor, style=label.style_label_lower_left, size=size.small)
+                state.valLabel := label.new(bar_index + state.labelOffset, valPrice, lText, color=color.new(state.valColor, 92), textcolor=state.valColor, style=label.style_label_lower_left, size=size.small)
                 
         array.clear(state.highs)
         array.clear(state.lows)
         array.clear(state.vols)
+
+    if isNewSes
         state.startIndex := bar_index
+        array.clear(state.highs)
+        array.clear(state.lows)
+        array.clear(state.vols)
 
     if inSes
         array.push(state.highs, high)
@@ -572,6 +580,68 @@ method processSession(ProfileState state, bool inSes, bool isNewSes) =>
     if not na(state.valLabel)
         label.set_x(state.valLabel, bar_index + state.labelOffset)
 
-wkState.processSession(inWeek, isNewWeek)
-nyState.processSession(inNY, isNewNY)
-onState.processSession(inON, isNewON)
+wkState.processSession(inWeek, isNewWeek, isEndWeek)
+nyState.processSession(inNY, isNewNY, isEndNY)
+onState.processSession(inON, isNewON, isEndON)
+
+// ========================================================================
+// SESSION BOXES
+// ========================================================================
+grpBoxes = "Session Boxes"
+showNyBox = input.bool(true, title="Show NY Session Box", group=grpBoxes)
+nyBoxColor = input.color(color.new(color.blue, 92), title="NY Box Color", group=grpBoxes)
+nyBoxBorder = input.color(color.new(color.blue, 92), title="NY Box Border", group=grpBoxes)
+
+showOnBox = input.bool(true, title="Show Overnight Session Box", group=grpBoxes)
+onBoxColor = input.color(color.new(color.purple, 92), title="Overnight Box Color", group=grpBoxes)
+onBoxBorder = input.color(color.new(color.purple, 92), title="Overnight Box Border", group=grpBoxes)
+
+showLnBox = input.bool(false, title="Show London Session Box", group=grpBoxes)
+lnBoxColor = input.color(color.new(color.green, 92), title="London Box Color", group=grpBoxes)
+lnBoxBorder = input.color(color.new(color.green, 92), title="London Box Border", group=grpBoxes)
+
+showAsBox = input.bool(false, title="Show Asia Session Box", group=grpBoxes)
+asBoxColor = input.color(color.new(color.red, 92), title="Asia Box Color", group=grpBoxes)
+asBoxBorder = input.color(color.new(color.red, 92), title="Asia Box Border", group=grpBoxes)
+
+type SessionBox
+    box b
+    float h
+    float l
+    int startIdx
+
+method updateBox(SessionBox sb, bool show, bool inSes, bool isNewSes, color bgColor, color borderColor) =>
+    if show and isNewSes
+        sb.h        := high
+        sb.l        := low
+        sb.startIdx := bar_index
+        sb.b        := box.new(sb.startIdx, sb.h, bar_index, sb.l, border_color=borderColor, bgcolor=bgColor)
+
+    if show and inSes and not isNewSes
+        sb.h := math.max(sb.h, high)
+        sb.l := math.min(sb.l, low)
+        if not na(sb.b)
+            box.set_top(sb.b, sb.h)
+            box.set_bottom(sb.b, sb.l)
+            box.set_right(sb.b, bar_index)
+
+var SessionBox nyBoxState = SessionBox.new(na, 0.0, 0.0, 0)
+var SessionBox onBoxState = SessionBox.new(na, 0.0, 0.0, 0)
+var SessionBox lnBoxState = SessionBox.new(na, 0.0, 0.0, 0)
+var SessionBox asBoxState = SessionBox.new(na, 0.0, 0.0, 0)
+
+bool inNY_box = not na(time(timeframe.period, nySession, tzInput))
+bool isNewNY_box = inNY_box and not inNY_box[1]
+nyBoxState.updateBox(showNyBox, inNY_box, isNewNY_box, nyBoxColor, nyBoxBorder)
+
+bool inON_box = not na(time(timeframe.period, onSession, tzInput))
+bool isNewON_box = inON_box and not inON_box[1]
+onBoxState.updateBox(showOnBox, inON_box, isNewON_box, onBoxColor, onBoxBorder)
+
+bool inLN_box = not na(time(timeframe.period, lnSession, tzInput))
+bool isNewLN_box = inLN_box and not inLN_box[1]
+lnBoxState.updateBox(showLnBox, inLN_box, isNewLN_box, lnBoxColor, lnBoxBorder)
+
+bool inAS_box = not na(time(timeframe.period, asSession, tzInput))
+bool isNewAS_box = inAS_box and not inAS_box[1]
+asBoxState.updateBox(showAsBox, inAS_box, isNewAS_box, asBoxColor, asBoxBorder)
