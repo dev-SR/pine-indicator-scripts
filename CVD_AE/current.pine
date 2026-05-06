@@ -1,80 +1,100 @@
 //@version=5
 
 // ════════════════════════════════════════════════════════════════════════════
-//  CVD Absorption / Exhaustion — v6   (Robust State + Self-Documenting Labels)
+//  CVD Absorption / Exhaustion — v7   (Trend-Aware + Video-Aligned Dashboard)
 //
-//  FIXES over v5
+//  FIXES & IMPROVEMENTS over v6
 //  ─────────────────────────────────────────────────────────────────────────
-//  1. PREV-STATE ONLY ADVANCES WHEN dist >= minDist
-//     In v5, ANY micro-pivot (even 1 bar away) silently replaced the valid
-//     swing reference, so the next comparison was against noise, causing:
-//       • Bullish Absorption to miss or misfire (HL/LL comparison corrupted)
-//       • Exhaustion signals to appear at wrong bars
-//     Fix: the "prev" reference stays pinned to the last VALID swing until a
-//     pivot spaced ≥ minDist bars arrives.  Micro-pivots are skipped entirely.
+//  1. TREND CONTEXT (NEW)
+//     Dual-EMA + slope classifies price as ▲ Uptrend / ▼ Downtrend / ↔ Conso.
+//     Dashboard action messages are now DIFFERENT per trend, matching the
+//     video's core teaching: the same CVD pattern has different implications
+//     depending on whether price is trending or ranging.
 //
-//  2. SELF-DOCUMENTING LABELS
-//     Every signal label now shows the price structure + CVD direction that
-//     triggered it, e.g. "ABS Bear ★★  LH | CVD ↑HH".  You can instantly
-//     verify whether the correct pattern was detected without squinting at
-//     the chart.
+//  2. RAPID vs GRADUAL CVD MOVE (NEW)
+//     Measures CVD change over the pivot window vs. its rolling average.
+//     Flags each signal as ⚡ Rapid or 〜 Gradual — the video treats these
+//     very differently:
+//       ⚡ RAPID  → high-conviction counter-trade opportunity (oversold/overbought)
+//       〜 GRADUAL → context-heavy; often continuation; lower conviction
 //
-//  3. START-OF-LINE MARKER
-//     A small "●" label is placed at the LEFT (start) pivot of every signal
-//     line so both anchor points are clearly visible on the CVD pane.
+//  3. PRICE SWING SIZE CLASSIFICATION (NEW)
+//     Classifies the price swing between pivots as Large / Average / Small
+//     relative to recent range. Per the video:
+//       Large move  + CVD spike  → breakout / continuation likely
+//       Average / Small + spike  → reversal more likely (absorbed wall)
 //
-//  Patterns (all four now fire reliably)
-//  ─────────────────────────────────────────────────────────────────────────
-//  Bearish Exhaustion  │ Price HH + CVD LH  │ dashed │ gray
-//    Buyers push price to a new high, but buying ORDER FLOW peaks lower →
-//    conviction is fading.  Reversal risk.
+//  4. FIXED PATTERN ROW (BUG FIX)
+//     v6 said "Absorption → continuation" — this was WRONG.
+//     Absorption = passive limit wall ABSORBED the aggressive side.
+//     Price reverses AGAINST the aggressor. Fixed to:
+//       Absorption  → Wall absorbed aggressor → price reverses vs CVD spike
+//       Exhaustion  → Conviction divergence → reversal risk
 //
-//  Bearish Absorption  │ Price LH + CVD HH  │ solid  │ red/magenta
-//    Aggressive buyers ram CVD to a new high, but price makes a lower high →
-//    a passive SELL-LIMIT WALL absorbed all bids.  Short opportunity.
+//  5. CONTEXT-AWARE ACTION MESSAGES (BUG FIX)
+//     All four signal×trend combinations now produce unique guidance:
+//       Bull Abs + downtrend   → STRONG LONG (oversold demand wall)
+//       Bull Abs + uptrend     → LONG continuation
+//       Bull Abs + conso       → Bull spring / stop-hunt done
+//       Bear Abs + uptrend     → STRONG SHORT (overbought supply wall)
+//       Bear Abs + downtrend   → SHORT continuation
+//       Bear Abs + conso       → Bear shakeout / institutions distributing
+//       Exhaustion patterns    → Tighten / caution / confirm first
 //
-//  Bullish Exhaustion  │ Price LL + CVD HL  │ dashed │ gray
-//    Sellers push price to a new low, but selling ORDER FLOW makes a higher
-//    low → sellers are losing conviction.  Reversal risk.
+//  6. TREND SNAPSHOT IN DASHBOARD (NEW)
+//     Stores the trend at the time the signal fired, not just the live trend.
+//     Also shows live trend separately so you can spot regime changes.
 //
-//  Bullish Absorption  │ Price HL + CVD LL  │ solid  │ teal/cyan
-//    Aggressive sellers hammer CVD to a new low, but price holds a higher
-//    low → a passive BUY-LIMIT WALL absorbed all offers.  Long opportunity.
-//
-//  Lines connect (prevPivotBar, prevCVD) → (curPivotBar, curCVD) on the
-//  CVD pane.  Labels sit at the RIGHT pivot; a dot marks the LEFT pivot.
+//  All v6 pivot-state fixes (minDist pinning) and self-documenting labels are
+//  preserved.
 // ════════════════════════════════════════════════════════════════════════════
 
-indicator("CVD Abs/Exh — v6",
+indicator("CVD Abs/Exh — v7",
      overlay          = false,
      format           = format.volume,
      max_lines_count  = 500,
      max_labels_count = 500)
 
-// ─── INPUTS ─────────────────────────────────────────────────────────────────
-grp_piv = "Pivot Settings"
-lbL     = input.int(5,   "Left Bars",           minval=1, group=grp_piv)
-lbR     = input.int(3,   "Right Bars",          minval=1, group=grp_piv)
-minDist = input.int(5,   "Min Distance (bars)", minval=1, group=grp_piv)
-maxDist = input.int(60,  "Max Distance (bars)", minval=1, group=grp_piv)
+// ─── INPUTS ──────────────────────────────────────────────────────────────────
+grp_piv   = "Pivot Settings"
+lbL       = input.int(5,   "Left Bars",           minval=1, group=grp_piv)
+lbR       = input.int(3,   "Right Bars",          minval=1, group=grp_piv)
+minDist   = input.int(5,   "Min Distance (bars)", minval=1, group=grp_piv)
+maxDist   = input.int(60,  "Max Distance (bars)", minval=1, group=grp_piv)
 
-grp_ma  = "Moving Average"
-maLen   = input.int(20, "CVD MA Length", minval=1, group=grp_ma)
+grp_ma    = "Moving Average"
+maLen     = input.int(20,  "CVD MA Length", minval=1, group=grp_ma)
 
-grp_ui      = "Display"
-showTable   = input.bool(true, "Show Dashboard",    group=grp_ui)
-showPivDots = input.bool(true, "Show Pivot Dots",   group=grp_ui)
-showFromDot = input.bool(true, "Show Line-Start ●", group=grp_ui)
+grp_trend = "Trend Detection"
+emaFLen   = input.int(20,  "Fast EMA Length",  minval=2, group=grp_trend,
+     tooltip="Fast EMA for trend. Lower = more reactive. Default 20.")
+emaSLen   = input.int(50,  "Slow EMA Length",  minval=5, group=grp_trend,
+     tooltip="Slow EMA for trend. Default 50.")
+slopeLen  = input.int(5,   "EMA Slope Period", minval=1, group=grp_trend,
+     tooltip="Bars used to measure slow EMA slope direction.")
 
-grp_col = "Colors"
-col_cvd       = input.color(color.yellow, "CVD", group=grp_col)
-col_cvd_ma    = input.color(color.new(color.white, 20), "CVD MA", group=grp_col)
-col_bull_exh  = input.color(color.new(color.green, 50), "Bull Exh", group=grp_col)
-col_bull_abs  = input.color(color.new(color.green, 0), "Bull Abs", group=grp_col)
-col_bear_exh  = input.color(color.new(color.red, 50), "Bear Exh", group=grp_col)
-col_bear_abs  = input.color(color.new(color.red, 0), "Bear Abs", group=grp_col)
+grp_mom   = "CVD Momentum"
+rapidMult = input.float(1.5, "Rapid Threshold (× avg change)", minval=0.5, step=0.1,
+     group=grp_mom,
+     tooltip="CVD change at pivot > this × rolling avg → ⚡ Rapid. Below → 〜 Gradual.")
 
-// ─── CVD  (Bull & Bear Balance via OHLCV approximation) ─────────────────────
+grp_ui    = "Display"
+showTable   = input.bool(true,  "Show Dashboard",    group=grp_ui)
+showPivDots = input.bool(true,  "Show Pivot Dots",   group=grp_ui)
+showFromDot = input.bool(true,  "Show Line-Start ●", group=grp_ui)
+
+grp_col   = "Colors"
+col_cvd      = input.color(color.yellow,               "CVD",      group=grp_col)
+col_cvd_ma   = input.color(color.new(color.white, 20), "CVD MA",   group=grp_col)
+col_bull_exh = input.color(color.new(color.green, 50), "Bull Exh", group=grp_col)
+col_bull_abs = input.color(color.new(color.green,  0), "Bull Abs", group=grp_col)
+col_bear_exh = input.color(color.new(color.red,   50), "Bear Exh", group=grp_col)
+col_bear_abs = input.color(color.new(color.red,    0), "Bear Abs", group=grp_col)
+
+// ─── CVD (OHLCV bull/bear approximation) ─────────────────────────────────────
+// True CVD requires tick-level bid/ask data unavailable in TV.
+// This approximation weights volume by how close close is to high vs low —
+// a standard and reasonable proxy.
 rng      = high - low
 bullPow  = rng == 0 ? 0.0 : (close - low)
 bearPow  = rng == 0 ? 0.0 : (high - close)
@@ -86,31 +106,45 @@ cvd      = ta.cum(delta)
 cvd_ma   = ta.sma(cvd, maLen)
 
 fill_col = cvd > cvd_ma ? color.new(color.teal, 70) : color.new(color.red, 70)
-p_cvd    = plot(cvd,    "Raw CVD", color=col_cvd,               linewidth=2)
-p_ma     = plot(cvd_ma, "CVD MA",  color=col_cvd_ma,            linewidth=1)
+p_cvd    = plot(cvd,    "Raw CVD", color=col_cvd,    linewidth=2)
+p_ma     = plot(cvd_ma, "CVD MA",  color=col_cvd_ma, linewidth=1)
 fill(p_cvd, p_ma, color=fill_col)
 hline(0, color=color.new(color.gray, 65), linestyle=hline.style_dotted)
 
+// ─── TREND DETECTION ─────────────────────────────────────────────────────────
+// Dual EMA cross + slope filter to avoid whip in sideways markets.
+// EMA cross alone gives too many false trend calls; the slope filter requires
+// the slow EMA to actually be moving, not just crossed.
+emaF      = ta.ema(close, emaFLen)
+emaS      = ta.ema(close, emaSLen)
+emaSlope  = emaS - emaS[slopeLen]
+isTrendUp = emaF > emaS and emaSlope > 0
+isTrendDn = emaF < emaS and emaSlope < 0
+// isConso = not isTrendUp and not isTrendDn (implicit)
+
+// ─── CVD MOMENTUM (Rapid vs Gradual) ─────────────────────────────────────────
+// Measures absolute CVD change over a window equal to the full pivot span,
+// then compares to its rolling average. Spikes well above average = Rapid.
+momWin    = lbL + lbR + 1
+cvdChgAbs = math.abs(cvd - cvd[momWin])
+avgChgAbs = ta.sma(cvdChgAbs, maxDist)
+
 // ─── PIVOT DETECTION ─────────────────────────────────────────────────────────
-// Implementation Strategy: Both Absorption and Exhaustion strictly utilize CVD Pivots.
-cvdPH   = ta.pivothigh(cvd,  lbL, lbR)
-cvdPL   = ta.pivotlow (cvd,  lbL, lbR)
+cvdPH = ta.pivothigh(cvd, lbL, lbR)
+cvdPL = ta.pivotlow (cvd, lbL, lbR)
 
-// Circles shifted back to the actual pivot bar (offset = -lbR)
-plot(showPivDots and not na(cvdPH) ? cvd[lbR] : na, "CVD Pivot High", color=color.new(color.red,  35), style=plot.style_circles, linewidth=2, offset=-lbR)
-plot(showPivDots and not na(cvdPL) ? cvd[lbR] : na, "CVD Pivot Low",  color=color.new(color.lime, 35), style=plot.style_circles, linewidth=2, offset=-lbR)
+plot(showPivDots and not na(cvdPH) ? cvd[lbR] : na, "CVD Pivot High",
+     color=color.new(color.red,  35), style=plot.style_circles, linewidth=2, offset=-lbR)
+plot(showPivDots and not na(cvdPL) ? cvd[lbR] : na, "CVD Pivot Low",
+     color=color.new(color.lime, 35), style=plot.style_circles, linewidth=2, offset=-lbR)
 
-// ─── COLOUR PALETTE ──────────────────────────────────────────────────────────
-C_BULL_ABS = col_bull_abs
-C_BEAR_ABS = col_bear_abs
-C_BULL_EXH = col_bull_exh
-C_BEAR_EXH = col_bear_exh
-
-// ─── NORMALISATION (tier calculation only — not signal conditions) ────────────
+// ─── NORMALISATION ───────────────────────────────────────────────────────────
 cvdRange = math.max(ta.highest(cvd,  maxDist) - ta.lowest(cvd,  maxDist), 1.0)
 prcRange = math.max(ta.highest(high, maxDist) - ta.lowest(low,  maxDist), 0.0001)
 
-// ─── SIGNAL REFERENCE STATE ──────────────────────────────────────────────────
+// ─── PIVOT REFERENCE STATE ───────────────────────────────────────────────────
+// v6 fix preserved: prev state only advances when dist >= minDist, preventing
+// micro-pivot noise from corrupting the comparison reference.
 var int   lastPhBar   = na
 var float lastPhPrice = na
 var float lastPhCvd   = na
@@ -119,204 +153,385 @@ var int   lastPlBar   = na
 var float lastPlPrice = na
 var float lastPlCvd   = na
 
-// ─── DASHBOARD STATE ─────────────────────────────────────────────────────────
-var string dSig  = "—"
-var color  dCol  = color.gray
-var string dAct  = "—"
-var string dQual = "—"
-var int    dBar  = na
-var int    dTier = na
-var bool   dBull = na
-var bool   dAbs  = na
+// ─── DASHBOARD PERSISTENT STATE ──────────────────────────────────────────────
+var string dSig          = "—"
+var color  dSigCol       = color.gray
+var string dAct          = "—"
+var string dQual         = "—"
+var int    dBar          = na
+var int    dTier         = na
+var bool   dBull         = na
+var bool   dAbs          = na
+var string dTrendSnap    = "—"       // trend at signal time
+var color  dTrendSnapCol = color.gray
+var string dMoment       = "—"       // Rapid / Gradual
+var color  dMomentCol    = color.gray
+var string dSwing        = "—"       // Large / Average / Small + note
+var string dPatternDesc  = "—"
+var color  dPatternCol   = color.gray
+
+// ─── HELPER: context-aware action message ────────────────────────────────────
+// Returns a specific action string based on the full signal context.
+// Implements the video's teaching that identical CVD patterns have different
+// meanings in different trend environments.
+f_action(tUp, tDn, bull, isAbs, isRapid) =>
+    string r = "—"
+    if isAbs
+        if bull  // Selling Pressure Absorbed  →  LONG signal
+            if tDn
+                r := isRapid ? "✅ STRONG LONG — Demand wall; sellers absorbed in downtrend → oversold bounce"
+                             : "✅ LONG — Sell pressure absorbed; gradual accumulation; watch for bounce"
+            else if tUp
+                r := isRapid ? "✅ LONG — Demand wall; sellers absorbed; uptrend likely continues"
+                             : "⚠ Weak LONG — Gradual absorption in uptrend; confirm momentum first"
+            else  // consolidation
+                r := isRapid ? "✅ LONG — Bull spring: stop-hunt complete; institutions accumulating below range"
+                             : "⚠ LONG watch — Gradual sell absorption in range; wait for price confirmation"
+        else  // Buying Pressure Absorbed  →  SHORT signal
+            if tUp
+                r := isRapid ? "✅ STRONG SHORT — Supply wall; buyers absorbed in uptrend → overbought reversal"
+                             : "✅ SHORT — Buy pressure absorbed; gradual distribution; watch for reversal"
+            else if tDn
+                r := isRapid ? "✅ SHORT — Supply wall; buyers absorbed; downtrend likely continues"
+                             : "⚠ Weak SHORT — Gradual absorption in downtrend; confirm momentum first"
+            else  // consolidation
+                r := isRapid ? "✅ SHORT — Bear shakeout: longs trapped at top; institutions distributing"
+                             : "⚠ SHORT watch — Gradual buy absorption in range; wait for price confirmation"
+    else  // Exhaustion (divergence between price & CVD)
+        if bull  // Exhausted Sellers (Price LL, CVD HL)
+            if tDn
+                r := isRapid ? "⚠ Tighten shorts — Sellers losing conviction rapidly; reversal risk high"
+                             : "⚠ Divergence — Seller momentum fading; watch for base formation"
+            else if tUp
+                r := "⚠ Rare in uptrend — Low-conviction pattern; monitor only; likely noise"
+            else
+                r := isRapid ? "⚠ Bull setup — Rapid seller exhaustion at support; sniper long possible"
+                             : "⚠ Mild bull divergence — Gradual; confirm with price before acting"
+        else  // Exhausted Buyers (Price HH, CVD LH)
+            if tUp
+                r := isRapid ? "⚠ Tighten longs — Buyers losing conviction rapidly; reversal risk high"
+                             : "⚠ Divergence — Buyer momentum fading; watch for top formation"
+            else if tDn
+                r := "⚠ Rare in downtrend — Low-conviction pattern; monitor only; likely noise"
+            else
+                r := isRapid ? "⚠ Bear setup — Rapid buyer exhaustion at resistance; sniper short possible"
+                             : "⚠ Mild bear divergence — Gradual; confirm with price before acting"
+    r
+
+// ─── HELPER: swing size label ─────────────────────────────────────────────────
+// pDiff is the normalised price distance between the two pivot prices.
+// Thresholds are tuned to the video's "far beyond resistance" (Large) concept.
+f_swing(pDiff) =>
+    pDiff >= 0.35 ? "Large" : pDiff >= 0.15 ? "Average" : "Small"
+
+// ─── HELPER: swing-size context note ─────────────────────────────────────────
+// Per the video: for absorption signals, a SMALL price move vs a BIG CVD move
+// is the strongest reversal signal (price couldn't move despite heavy flow).
+// For a LARGE price move + CVD spike, a breakout/continuation is possible.
+f_swingNote(isAbs, swing) =>
+    string n = ""
+    if isAbs
+        if swing == "Large"
+            n := "breakout possible — confirm"
+        else if swing == "Small"
+            n := "couldn't move despite flow → strongest reversal signal"
+        else
+            n := "moderate conviction"
+    else
+        if swing == "Large"
+            n := "exhaustion mild; still significant move"
+        else if swing == "Small"
+            n := "weak divergence — needs confirmation"
+        else
+            n := "standard divergence"
+    n
 
 // ════════════════════════════════════════════════════════════════════════════
-//  BEARISH SIGNALS (Anchors to CVD Pivot Highs)
+//  BEARISH SIGNALS  (anchored to CVD Pivot Highs)
 // ════════════════════════════════════════════════════════════════════════════
 if not na(cvdPH)
     curBar   = bar_index - lbR
-    curPrice = high[lbR]  // Price at the time of the CVD pivot
+    curPrice = high[lbR]
     curCvd   = cvd[lbR]
 
     if na(lastPhBar) or (curBar - lastPhBar) >= minDist
         if not na(lastPhBar) and (curBar - lastPhBar) <= maxDist
-            pDiff = math.abs(curPrice - lastPhPrice) / prcRange
-            cDiff = math.abs(curCvd   - lastPhCvd)   / cvdRange
-            score = pDiff + cDiff
-            tier  = score >= 0.50 ? 3 : score >= 0.25 ? 2 : 1
-            lw    = tier == 3 ? 3 : tier == 2 ? 2 : 1
+            pDiff  = math.abs(curPrice - lastPhPrice) / prcRange
+            cDiff  = math.abs(curCvd   - lastPhCvd)   / cvdRange
+            score  = pDiff + cDiff
+            tier   = score >= 0.50 ? 3 : score >= 0.25 ? 2 : 1
+            lw     = tier == 3 ? 3 : tier == 2 ? 2 : 1
 
-            bool isExh = curPrice > lastPhPrice and curCvd < lastPhCvd // HH, LH
-            bool isAbs = curPrice < lastPhPrice and curCvd > lastPhCvd // LH, HH
+            // Capture context at pivot bar (lbR bars ago)
+            isRapid  = cvdChgAbs[lbR] > avgChgAbs[lbR] * rapidMult
+            tUp      = isTrendUp[lbR]
+            tDn      = isTrendDn[lbR]
 
-            if isExh
-                line.new(lastPhBar, lastPhCvd, curBar, curCvd, color=C_BEAR_EXH, width=lw, style=line.style_dashed)
-                label.new(curBar, curCvd, "Exhausted Buyers", color=color.new(color.white, 100), textcolor=C_BEAR_EXH, style=label.style_label_down, size=size.small)
+            bool isBearExh = curPrice > lastPhPrice and curCvd < lastPhCvd  // HH price + LH CVD
+            bool isBearAbs = curPrice < lastPhPrice and curCvd > lastPhCvd  // LH price + HH CVD
+
+            if isBearExh or isBearAbs
+                sigCol  = isBearAbs ? col_bear_abs : col_bear_exh
+                sigLs   = isBearAbs ? line.style_solid : line.style_dashed
+                sigName = isBearAbs ? "Buying Pressure Absorbed" : "Exhausted Buyers"
+                swing   = f_swing(pDiff)
+
+                line.new(lastPhBar, lastPhCvd, curBar, curCvd,
+                     color=sigCol, width=lw, style=sigLs)
+
+                // Self-documenting label: show pattern logic inline
+                pStr   = isBearAbs ? "LH | CVD ↑HH" : "HH | CVD ↓LH"
+                rStr   = isRapid   ? " ⚡" : " 〜"
+                label.new(curBar, curCvd,
+                     sigName + "  [" + pStr + rStr + "]",
+                     color=color.new(color.white, 100), textcolor=sigCol,
+                     style=label.style_label_down, size=size.small)
+
                 if showFromDot
-                    label.new(lastPhBar, lastPhCvd, "●", color=color.new(C_BEAR_EXH, 50), textcolor=color.white, style=label.style_label_down, size=size.small)
+                    label.new(lastPhBar, lastPhCvd, "●",
+                         color=color.new(sigCol, 50), textcolor=color.white,
+                         style=label.style_label_down, size=size.small)
 
-                dSig  := "Exhausted Buyers"
-                dCol  := C_BEAR_EXH
-                dAct  := "⚠ Tighten longs / Sniper short"
-                dQual := tier==3 ? "★★★ Buyers stalling hard"  : tier==2 ? "★★☆ Momentum weakening"    : "★☆☆ Marginal — confirm"
-                dBar  := curBar
-                dTier := tier
-                dBull := false
-                dAbs  := false
-                alert("Exhausted Buyers | Price HH | CVD LH", alert.freq_once_per_bar_close)
+                tSnapStr = tUp ? "▲ Uptrend" : tDn ? "▼ Downtrend" : "↔ Consolidation"
+                tSnapCol = tUp ? color.teal  : tDn ? color.red      : color.orange
+                mStr     = isRapid ? "⚡ Rapid  (high conviction)" : "〜 Gradual  (lower conviction)"
+                mCol     = isRapid ? color.yellow : color.new(color.gray, 30)
+                actStr   = f_action(tUp, tDn, false, isBearAbs, isRapid)
+                swingStr = swing + "  — " + f_swingNote(isBearAbs, swing)
 
-            else if isAbs
-                line.new(lastPhBar, lastPhCvd, curBar, curCvd, color=C_BEAR_ABS, width=lw, style=line.style_solid)
-                label.new(curBar, curCvd, "Buying Pressure Absorbed", color=color.new(color.white, 100), textcolor=C_BEAR_ABS, style=label.style_label_down, size=size.small)
-                if showFromDot
-                    label.new(lastPhBar, lastPhCvd, "●", color=color.new(C_BEAR_ABS, 50), textcolor=color.white, style=label.style_label_down, size=size.small)
+                qualStr  = tier == 3 ? "★★★ " + (isBearAbs ? "Strong supply wall"    : "Conviction collapse") :
+                           tier == 2 ? "★★☆ " + (isBearAbs ? "Clear absorption"      : "Momentum fading")    :
+                                       "★☆☆ Marginal — wait for confirmation"
 
-                dSig  := "Buying Pressure Absorbed"
-                dCol  := C_BEAR_ABS
-                dAct  := "✅ SHORT — Sell-limit wall active"
-                dQual := tier==3 ? "★★★ Strong wall"       : tier==2 ? "★★☆ Clear absorption"  : "★☆☆ Weak — wait for confirm"
-                dBar  := curBar
-                dTier := tier
-                dBull := false
-                dAbs  := true
-                alert("Buying Pressure Absorbed | Price LH | CVD HH", alert.freq_once_per_bar_close)
+                patDesc  = isBearAbs ? "Supply wall absorbed all buying → price reverses ↓ vs CVD spike" 
+                                     : "Buyers losing conviction → price/CVD divergence → reversal risk"
+                patCol_  = isBearAbs ? col_bear_abs : col_bear_exh
+
+                dSig          := sigName
+                dSigCol       := sigCol
+                dAct          := actStr
+                dQual         := qualStr
+                dBar          := curBar
+                dTier         := tier
+                dBull         := false
+                dAbs          := isBearAbs
+                dTrendSnap    := tSnapStr
+                dTrendSnapCol := tSnapCol
+                dMoment       := mStr
+                dMomentCol    := mCol
+                dSwing        := swingStr
+                dPatternDesc  := patDesc
+                dPatternCol   := patCol_
+
+                alertMsg = isBearAbs ? "Buying Pressure Absorbed | Price LH | CVD HH"
+                                     : "Exhausted Buyers | Price HH | CVD LH"
+                alert(alertMsg, alert.freq_once_per_bar_close)
 
         lastPhBar   := curBar
         lastPhPrice := curPrice
         lastPhCvd   := curCvd
 
 // ════════════════════════════════════════════════════════════════════════════
-//  BULLISH SIGNALS (Anchors to CVD Pivot Lows)
+//  BULLISH SIGNALS  (anchored to CVD Pivot Lows)
 // ════════════════════════════════════════════════════════════════════════════
 if not na(cvdPL)
     curBar   = bar_index - lbR
-    curPrice = low[lbR]   // Price at the time of the CVD pivot
+    curPrice = low[lbR]
     curCvd   = cvd[lbR]
 
     if na(lastPlBar) or (curBar - lastPlBar) >= minDist
         if not na(lastPlBar) and (curBar - lastPlBar) <= maxDist
-            pDiff = math.abs(curPrice - lastPlPrice) / prcRange
-            cDiff = math.abs(curCvd   - lastPlCvd)   / cvdRange
-            score = pDiff + cDiff
-            tier  = score >= 0.50 ? 3 : score >= 0.25 ? 2 : 1
-            lw    = tier == 3 ? 3 : tier == 2 ? 2 : 1
+            pDiff  = math.abs(curPrice - lastPlPrice) / prcRange
+            cDiff  = math.abs(curCvd   - lastPlCvd)   / cvdRange
+            score  = pDiff + cDiff
+            tier   = score >= 0.50 ? 3 : score >= 0.25 ? 2 : 1
+            lw     = tier == 3 ? 3 : tier == 2 ? 2 : 1
 
-            bool isExh = curPrice < lastPlPrice and curCvd > lastPlCvd // LL, HL
-            bool isAbs = curPrice > lastPlPrice and curCvd < lastPlCvd // HL, LL
+            isRapid  = cvdChgAbs[lbR] > avgChgAbs[lbR] * rapidMult
+            tUp      = isTrendUp[lbR]
+            tDn      = isTrendDn[lbR]
 
-            if isExh
-                line.new(lastPlBar, lastPlCvd, curBar, curCvd, color=C_BULL_EXH, width=lw, style=line.style_dashed)
-                label.new(curBar, curCvd, "Exhausted Sellers", color=color.new(color.white, 100), textcolor=C_BULL_EXH, style=label.style_label_up, size=size.small)
+            bool isBullExh = curPrice < lastPlPrice and curCvd > lastPlCvd  // LL price + HL CVD
+            bool isBullAbs = curPrice > lastPlPrice and curCvd < lastPlCvd  // HL price + LL CVD
+
+            if isBullExh or isBullAbs
+                sigCol  = isBullAbs ? col_bull_abs : col_bull_exh
+                sigLs   = isBullAbs ? line.style_solid : line.style_dashed
+                sigName = isBullAbs ? "Selling Pressure Absorbed" : "Exhausted Sellers"
+                swing   = f_swing(pDiff)
+
+                line.new(lastPlBar, lastPlCvd, curBar, curCvd,
+                     color=sigCol, width=lw, style=sigLs)
+
+                pStr   = isBullAbs ? "HL | CVD ↓LL" : "LL | CVD ↑HL"
+                rStr   = isRapid   ? " ⚡" : " 〜"
+                label.new(curBar, curCvd,
+                     sigName + "  [" + pStr + rStr + "]",
+                     color=color.new(color.white, 100), textcolor=sigCol,
+                     style=label.style_label_up, size=size.small)
+
                 if showFromDot
-                    label.new(lastPlBar, lastPlCvd, "●", color=color.new(C_BULL_EXH, 50), textcolor=color.white, style=label.style_label_up, size=size.small)
+                    label.new(lastPlBar, lastPlCvd, "●",
+                         color=color.new(sigCol, 50), textcolor=color.white,
+                         style=label.style_label_up, size=size.small)
 
-                dSig  := "Exhausted Sellers"
-                dCol  := C_BULL_EXH
-                dAct  := "⚠ Tighten shorts / Sniper long"
-                dQual := tier==3 ? "★★★ Sellers stalling hard" : tier==2 ? "★★☆ Momentum weakening"    : "★☆☆ Marginal — confirm"
-                dBar  := curBar
-                dTier := tier
-                dBull := true
-                dAbs  := false
-                alert("Exhausted Sellers | Price LL | CVD HL", alert.freq_once_per_bar_close)
+                tSnapStr = tUp ? "▲ Uptrend" : tDn ? "▼ Downtrend" : "↔ Consolidation"
+                tSnapCol = tUp ? color.teal  : tDn ? color.red      : color.orange
+                mStr     = isRapid ? "⚡ Rapid  (high conviction)" : "〜 Gradual  (lower conviction)"
+                mCol     = isRapid ? color.yellow : color.new(color.gray, 30)
+                actStr   = f_action(tUp, tDn, true, isBullAbs, isRapid)
+                swingStr = swing + "  — " + f_swingNote(isBullAbs, swing)
 
-            else if isAbs
-                line.new(lastPlBar, lastPlCvd, curBar, curCvd, color=C_BULL_ABS, width=lw, style=line.style_solid)
-                label.new(curBar, curCvd, "Selling Pressure Absorbed", color=color.new(color.white, 100), textcolor=C_BULL_ABS, style=label.style_label_up, size=size.small)
-                if showFromDot
-                    label.new(lastPlBar, lastPlCvd, "●", color=color.new(C_BULL_ABS, 50), textcolor=color.white, style=label.style_label_up, size=size.small)
+                qualStr  = tier == 3 ? "★★★ " + (isBullAbs ? "Strong demand wall"    : "Conviction collapse") :
+                           tier == 2 ? "★★☆ " + (isBullAbs ? "Clear absorption"      : "Momentum fading")    :
+                                       "★☆☆ Marginal — wait for confirmation"
 
-                dSig  := "Selling Pressure Absorbed"
-                dCol  := C_BULL_ABS
-                dAct  := "✅ LONG — Buy-limit wall active"
-                dQual := tier==3 ? "★★★ Strong wall"       : tier==2 ? "★★☆ Clear absorption"  : "★☆☆ Weak — wait for confirm"
-                dBar  := curBar
-                dTier := tier
-                dBull := true
-                dAbs  := true
-                alert("Selling Pressure Absorbed | Price HL | CVD LL", alert.freq_once_per_bar_close)
+                patDesc  = isBullAbs ? "Demand wall absorbed all selling → price reverses ↑ vs CVD drop"
+                                     : "Sellers losing conviction → price/CVD divergence → reversal risk"
+                patCol_  = isBullAbs ? col_bull_abs : col_bull_exh
+
+                dSig          := sigName
+                dSigCol       := sigCol
+                dAct          := actStr
+                dQual         := qualStr
+                dBar          := curBar
+                dTier         := tier
+                dBull         := true
+                dAbs          := isBullAbs
+                dTrendSnap    := tSnapStr
+                dTrendSnapCol := tSnapCol
+                dMoment       := mStr
+                dMomentCol    := mCol
+                dSwing        := swingStr
+                dPatternDesc  := patDesc
+                dPatternCol   := patCol_
+
+                alertMsg = isBullAbs ? "Selling Pressure Absorbed | Price HL | CVD LL"
+                                     : "Exhausted Sellers | Price LL | CVD HL"
+                alert(alertMsg, alert.freq_once_per_bar_close)
 
         lastPlBar   := curBar
         lastPlPrice := curPrice
         lastPlCvd   := curCvd
 
-
 // ════════════════════════════════════════════════════════════════════════════
-//  TRADE DECISION DASHBOARD
+//  DASHBOARD
 // ════════════════════════════════════════════════════════════════════════════
 if showTable and barstate.islast
-    var table dash = table.new(position.top_right, 2, 13,
+    var table dash = table.new(position.top_right, 2, 17,
          bgcolor      = color.new(#08080f, 8),
          border_width = 1,
          border_color = color.new(color.gray, 55),
          frame_width  = 1,
          frame_color  = color.new(color.gray, 35))
 
-    // Header
-    table.cell(dash, 0, 0, "⚡  CVD  DASHBOARD",
+    // ── Row 0: Header ──────────────────────────────────────────────────────
+    table.cell(dash, 0, 0, "⚡  CVD  DASHBOARD  v7",
          text_color=color.white, text_size=size.normal,
          text_halign=text.align_center, bgcolor=color.new(#1a1a3e, 0))
     table.merge_cells(dash, 0, 0, 1, 0)
 
-    // CVD flow
-    tStr = cvd > cvd_ma ? "▲  Bullish Flow" : "▼  Bearish Flow"
-    tCol = cvd > cvd_ma ? color.teal : color.red
-    table.cell(dash, 0, 1, "CVD Flow", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 1, tStr,       text_color=tCol,       text_size=size.small)
+    // ── Row 1: Live Trend ──────────────────────────────────────────────────
+    // Shows current trend regime so you can spot if it changed since signal.
+    liveTStr = isTrendUp ? "▲  Uptrend" : isTrendDn ? "▼  Downtrend" : "↔  Consolidation"
+    liveTCol = isTrendUp ? color.teal   : isTrendDn ? color.red       : color.orange
+    table.cell(dash, 0, 1, "Trend (live)", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 1, liveTStr,       text_color=liveTCol,   text_size=size.small)
 
+    // ── Row 2: CVD Flow ────────────────────────────────────────────────────
+    flowStr = cvd > cvd_ma ? "▲  Bullish Flow" : "▼  Bearish Flow"
+    flowCol = cvd > cvd_ma ? color.teal : color.red
+    table.cell(dash, 0, 2, "CVD Flow", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 2, flowStr,    text_color=flowCol,    text_size=size.small)
+
+    // ── Row 3: CVD vs MA ───────────────────────────────────────────────────
     sp    = cvd - cvd_ma
     spPct = math.abs(cvd_ma) > 0 ? sp / math.abs(cvd_ma) * 100 : 0.0
-    spStr = (spPct >= 0 ? "+" : "") + str.tostring(math.round(spPct, 1)) + "%"
+    spStr = (spPct >= 0 ? "+" : "") + str.tostring(math.round(spPct, 1)) + "%  vs MA"
     spCol = spPct >= 0 ? color.teal : color.red
-    table.cell(dash, 0, 2, "vs MA", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 2, spStr,   text_color=spCol,      text_size=size.small)
+    table.cell(dash, 0, 3, "CVD vs MA", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 3, spStr,       text_color=spCol,      text_size=size.small)
 
-    table.cell(dash, 0, 3, "───  Last Signal  ───",
+    // ── Row 4: Section separator ───────────────────────────────────────────
+    table.cell(dash, 0, 4, "───  Last Signal  ───",
          bgcolor=color.new(#1a1a3e, 0), text_color=color.new(color.gray, 25),
          text_size=size.small, text_halign=text.align_center)
-    table.merge_cells(dash, 0, 3, 1, 3)
+    table.merge_cells(dash, 0, 4, 1, 4)
 
-    table.cell(dash, 0, 4, "Interpretation", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 4, dSig,             text_color=dCol,       text_size=size.small)
+    // ── Row 5: Signal name ─────────────────────────────────────────────────
+    table.cell(dash, 0, 5, "Signal",  text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 5, dSig,      text_color=dSigCol,    text_size=size.small)
 
-    stStr = na(dTier) ? "—" :
-             dTier==3  ? "★★★  Strong" :
-             dTier==2  ? "★★☆  Medium" : "★☆☆  Weak"
-    stCol = na(dTier) ? color.gray :
-             dTier==3  ? color.lime  :
-             dTier==2  ? color.orange : color.new(color.gray, 20)
-    table.cell(dash, 0, 5, "Strength", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 5, stStr,      text_color=stCol,      text_size=size.small)
+    // ── Row 6: Trend at signal time ────────────────────────────────────────
+    // Critical: different trend → different meaning for the same signal.
+    table.cell(dash, 0, 6, "Trend @ Signal", text_color=color.gray,     text_size=size.small)
+    table.cell(dash, 1, 6, dTrendSnap,        text_color=dTrendSnapCol,  text_size=size.small)
 
+    // ── Row 7: CVD Momentum ────────────────────────────────────────────────
+    // Rapid = high-conviction counter-trade | Gradual = continuation / confirm first
+    table.cell(dash, 0, 7, "CVD Momentum", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 7, dMoment,        text_color=dMomentCol, text_size=size.small)
+
+    // ── Row 8: Price Swing Size ────────────────────────────────────────────
+    // Small move + big CVD = strongest reversal. Large move = possible continuation.
+    table.cell(dash, 0, 8, "Swing Size",  text_color=color.gray,  text_size=size.small)
+    table.cell(dash, 1, 8, dSwing,        text_color=color.white, text_size=size.small)
+
+    // ── Row 9: Signal Strength ─────────────────────────────────────────────
+    stStr = na(dTier) ? "—" : dTier==3 ? "★★★  Strong" : dTier==2 ? "★★☆  Medium" : "★☆☆  Weak"
+    stCol = na(dTier) ? color.gray : dTier==3 ? color.lime : dTier==2 ? color.orange : color.new(color.gray, 20)
+    table.cell(dash, 0, 9, "Strength", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 9, stStr,      text_color=stCol,      text_size=size.small)
+
+    // ── Row 10: Age ────────────────────────────────────────────────────────
     ageStr = na(dBar) ? "—" : str.tostring(bar_index - dBar) + "  bars ago"
-    table.cell(dash, 0, 6, "Age",  text_color=color.gray,  text_size=size.small)
-    table.cell(dash, 1, 6, ageStr, text_color=color.white, text_size=size.small)
+    table.cell(dash, 0, 10, "Age",   text_color=color.gray,  text_size=size.small)
+    table.cell(dash, 1, 10, ageStr,  text_color=color.white, text_size=size.small)
 
-    table.cell(dash, 0, 7, "───  Trade Decision  ───",
+    // ── Row 11: Section separator ──────────────────────────────────────────
+    table.cell(dash, 0, 11, "───  Trade Decision  ───",
          bgcolor=color.new(#1a1a3e, 0), text_color=color.new(color.gray, 25),
          text_size=size.small, text_halign=text.align_center)
-    table.merge_cells(dash, 0, 7, 1, 7)
+    table.merge_cells(dash, 0, 11, 1, 11)
 
-    table.cell(dash, 0, 8, "Action", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 8, dAct,     text_color=dCol,       text_size=size.small)
+    // ── Row 12: Action ─────────────────────────────────────────────────────
+    table.cell(dash, 0, 12, "Action", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 12, dAct,     text_color=dSigCol,    text_size=size.small)
 
-    table.cell(dash, 0, 9, "Quality", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 9, dQual,     text_color=dCol,       text_size=size.small)
+    // ── Row 13: Quality ────────────────────────────────────────────────────
+    table.cell(dash, 0, 13, "Quality", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 13, dQual,     text_color=dSigCol,    text_size=size.small)
 
-    bool aligned = (dBull == true  and cvd > cvd_ma) or
-                   (dBull == false and cvd < cvd_ma)
-    alStr = na(dBull) ? "—" : aligned ? "✓  Trend-aligned  ↑ prob" : "✗  Counter-trend  ↓ prob"
-    alCol = na(dBull) ? color.gray : aligned ? color.lime : color.orange
-    table.cell(dash, 0, 10, "Trend Align", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 10, alStr,         text_color=alCol,      text_size=size.small)
+    // ── Row 14: Trend Alignment ────────────────────────────────────────────
+    // Counter-trend signals are often the STRONGEST (oversold/overbought walls).
+    // This row flags when live trend changed since signal → stale context risk.
+    bool trendChanged = not na(dBull) and
+         ((dBull and isTrendDn) or (not dBull and isTrendUp))
+    alStr = na(dBull) ? "—" :
+         trendChanged ? "⚡ Trend flipped since signal — re-evaluate" :
+         ((dBull and isTrendUp) or (not dBull and isTrendDn))
+              ? "✓  Signal aligns with current trend" :
+         ((dBull and not isTrendUp and not isTrendDn) or
+          (not dBull and not isTrendUp and not isTrendDn))
+              ? "→  Signal in consolidation context" :
+         "✗  Counter-trend signal (often strongest — wall absorbing trend)"
+    alCol = na(dBull) ? color.gray :
+         trendChanged ? color.orange :
+         ((dBull and isTrendUp) or (not dBull and isTrendDn)) ? color.lime :
+         ((dBull and not isTrendUp) or (not dBull and not isTrendDn)) ? color.yellow :
+         color.yellow
+    table.cell(dash, 0, 14, "Alignment",  text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 14, alStr,         text_color=alCol,      text_size=size.small)
 
-    patStr = na(dAbs) ? "—" :
-             dAbs     ? "Absorption  →  continuation" : "Exhaustion  →  reversal risk"
-    patCol = na(dAbs) ? color.gray : dAbs ? color.lime : color.orange
-    table.cell(dash, 0, 11, "Pattern", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 11, patStr,    text_color=patCol,     text_size=size.small)
+    // ── Row 15: Pattern Description ────────────────────────────────────────
+    // FIXED: Absorption now correctly says "price reverses vs CVD spike",
+    // not the old wrong "→ continuation".
+    table.cell(dash, 0, 15, "Pattern",   text_color=color.gray,    text_size=size.small)
+    table.cell(dash, 1, 15, dPatternDesc, text_color=dPatternCol,  text_size=size.small)
 
-    table.cell(dash, 0, 12,
-         "Solid = ABS (entry)  ·  Dashed = EXH (exit / caution)",
+    // ── Row 16: Legend ─────────────────────────────────────────────────────
+    table.cell(dash, 0, 16,
+         "Solid = Absorption (wall entry)  ·  Dashed = Exhaustion (divergence / exit caution)",
          bgcolor=color.new(#1a1a3e, 0), text_color=color.new(color.gray, 20),
          text_size=size.small, text_halign=text.align_center)
-    table.merge_cells(dash, 0, 12, 1, 12)
+    table.merge_cells(dash, 0, 16, 1, 16)
