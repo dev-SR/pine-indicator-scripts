@@ -1,0 +1,346 @@
+//@version=5
+// ═══════════════════════════════════════════════════════════════════════
+//  CVD Absorption / Exhaustion  —  Advanced v4
+//
+//  Core fix: ALL line.new / label.new calls are INLINED inside their
+//  respective if-blocks, using the IDENTICAL structure as the original
+//  working script.  No UDF wrappers, no helper functions for drawing.
+//
+//  Enhancements added inline:
+//    • 3-tier signal strength (normalised CVD vs price divergence)
+//    • Tier-graded colours: muted → vivid → electric
+//    • Line width 1 / 2 / 3 per tier
+//    • Star rating in labels  ★☆☆ / ★★☆ / ★★★
+//    • Solid line = Absorption (trade) | Dashed = Exhaustion (caution)
+//    • Trade decision dashboard with confluence check
+//    • Alert on every signal type + tier
+// ═══════════════════════════════════════════════════════════════════════
+indicator("CVD Abs/Exh — Advanced v4",
+     overlay          = false,
+     format           = format.volume,
+     max_lines_count  = 500,
+     max_labels_count = 500)
+
+// ─────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────
+grp_piv = "Pivot Settings"
+lbL     = input.int(1,  "Left Bars",    minval=1, group=grp_piv)
+lbR     = input.int(2,  "Right Bars",   minval=1, group=grp_piv)
+minDist = input.int(5,  "Min Distance", minval=1, group=grp_piv)
+maxDist = input.int(60, "Max Distance", minval=1, group=grp_piv)
+
+grp_ma  = "Moving Average"
+maLen   = input.int(20, "CVD MA Length", minval=1, group=grp_ma)
+
+grp_ui  = "Display"
+showTable = input.bool(true, "Show Dashboard", group=grp_ui)
+
+// ─────────────────────────────────────────────────────────────────────
+// CVD  (Bull & Bear Balance method — identical to original)
+// ─────────────────────────────────────────────────────────────────────
+rng      = high - low
+bullPow  = rng == 0 ? 0.0 : (close - low)
+bearPow  = rng == 0 ? 0.0 : (high - close)
+totalPwr = bullPow + bearPow
+
+bullVol  = totalPwr == 0 ? volume * 0.5 : volume * (bullPow / totalPwr)
+bearVol  = totalPwr == 0 ? volume * 0.5 : volume * (bearPow / totalPwr)
+
+delta    = bullVol - bearVol
+cvd      = ta.cum(delta)
+cvd_ma   = ta.sma(cvd, maLen)
+
+// Ribbon + reference line
+fill_col = cvd > cvd_ma ? color.new(color.teal, 70) : color.new(color.red, 70)
+p_cvd    = plot(cvd,    "Raw CVD", color=color.yellow,               linewidth=2)
+p_ma     = plot(cvd_ma, "CVD MA",  color=color.new(color.white, 20), linewidth=1)
+fill(p_cvd, p_ma, color=fill_col)
+hline(0, color=color.new(color.gray, 65), linestyle=hline.style_dotted)
+
+// ─────────────────────────────────────────────────────────────────────
+// PIVOT DETECTION  (on CVD series — same as original)
+// ─────────────────────────────────────────────────────────────────────
+pivotHigh = ta.pivothigh(cvd, lbL, lbR)
+pivotLow  = ta.pivotlow (cvd, lbL, lbR)
+
+// ─────────────────────────────────────────────────────────────────────
+// PREVIOUS-PIVOT STATE  (same names as original for clarity)
+// ─────────────────────────────────────────────────────────────────────
+var float lastPhCvd   = na
+var float lastPhPrice = na
+var int   lastPhBar   = na
+
+var float lastPlCvd   = na
+var float lastPlPrice = na
+var int   lastPlBar   = na
+
+// ─────────────────────────────────────────────────────────────────────
+// STRENGTH NORMALISATION  — rolling range over maxDist bars
+//   Divides both the CVD move and the price move by their recent range
+//   so the ratio is scale-free and works on any instrument / timeframe.
+// ─────────────────────────────────────────────────────────────────────
+cvdRange = math.max(ta.highest(cvd,  maxDist) - ta.lowest(cvd,  maxDist), 1.0)
+prcRange = math.max(ta.highest(high, maxDist) - ta.lowest(low,  maxDist), 0.0001)
+
+// ─────────────────────────────────────────────────────────────────────
+// COLOUR PALETTES  (Tier 1 = muted, Tier 2 = vivid, Tier 3 = electric)
+// ─────────────────────────────────────────────────────────────────────
+// Bullish Absorption
+C_BULL_1 = color.new(#007755, 0)   // muted teal
+C_BULL_2 = color.new(#00ffcc, 0)   // bright teal
+C_BULL_3 = color.new(#00ffff, 0)   // electric cyan
+
+// Bearish Absorption
+C_BEAR_1 = color.new(#990022, 0)   // dark red
+C_BEAR_2 = color.new(#ff0055, 0)   // red-pink  (matches original)
+C_BEAR_3 = color.new(#ff00cc, 0)   // hot magenta
+
+// Exhaustion (both directions)
+C_EXH_1  = color.new(#444444, 0)   // charcoal
+C_EXH_2  = color.new(#888888, 0)   // steel gray
+C_EXH_3  = color.new(#cccccc, 0)   // silver
+
+// ─────────────────────────────────────────────────────────────────────
+// DASHBOARD STATE
+// ─────────────────────────────────────────────────────────────────────
+var string dSig  = "—"
+var color  dCol  = color.gray
+var string dAct  = "—"
+var string dQual = "—"
+var int    dBar  = na
+var int    dTier = na
+var bool   dBull = na
+var bool   dAbs  = na
+
+// ═════════════════════════════════════════════════════════════════════
+//  BEARISH SIGNALS  (CVD Pivot Highs)
+//  Structure preserved verbatim from original.
+//  Only additions: tier calc + colour pick + dashboard update inside block.
+// ═════════════════════════════════════════════════════════════════════
+if not na(pivotHigh)
+    currBar = bar_index - lbR
+    dist    = currBar - lastPhBar
+
+    if not na(lastPhBar) and dist >= minDist and dist <= maxDist
+        currCvd   = cvd[lbR]
+        currPrice = high[lbR]
+
+        // ── Strength tier ─────────────────────────────────────────────
+        pDiff = math.abs(currPrice - lastPhPrice) / prcRange
+        cDiff = math.abs(currCvd   - lastPhCvd)   / cvdRange
+        ratio = pDiff > 0.005 ? math.min(cDiff / pDiff, 6.0) : (cDiff > 0.12 ? 3.0 : 1.0)
+        tier  = ratio > 2.2 ? 3 : ratio > 0.9 ? 2 : 1
+        lw    = tier == 3 ? 3 : tier == 2 ? 2 : 1
+        star  = tier == 3 ? " ★★★" : tier == 2 ? " ★★☆" : " ★☆☆"
+
+        // ── BEARISH EXHAUSTION : Price HH  +  CVD LH ─────────────────
+        //    Buyers pushing price up but order-flow fading → reversal risk
+        if currPrice > lastPhPrice and currCvd < lastPhCvd
+            ec = tier == 3 ? C_EXH_3 : tier == 2 ? C_EXH_2 : C_EXH_1
+            line.new(lastPhBar, lastPhCvd, currBar, currCvd,
+                 color=ec, width=lw, style=line.style_dashed)
+            label.new(currBar, currCvd, "EXH Bear" + star,
+                 color=ec, textcolor=color.white,
+                 style=label.style_label_down, size=size.small)
+            dSig  := "Bearish Exhaustion"
+            dCol  := ec
+            dAct  := "⚠ Tighten longs / Sniper short"
+            dQual := tier == 3 ? "★★★ Buyers stalling hard" :
+                     tier == 2 ? "★★☆ Momentum weakening"   : "★☆☆ Marginal — confirm"
+            dBar  := currBar
+            dTier := tier
+            dBull := false
+            dAbs  := false
+            alert("BEARISH EXH" + star + " | Price:HH CVD:LH | Buyers exhausted",
+                 alert.freq_once_per_bar_close)
+
+        // ── BEARISH ABSORPTION : Price LH  +  CVD HH ─────────────────
+        //    Buyers aggressive (CVD up) but price can't follow →
+        //    passive sell-limit wall absorbing every bid → short cont.
+        else if currPrice < lastPhPrice and currCvd > lastPhCvd
+            ac = tier == 3 ? C_BEAR_3 : tier == 2 ? C_BEAR_2 : C_BEAR_1
+            line.new(lastPhBar, lastPhCvd, currBar, currCvd,
+                 color=ac, width=lw, style=line.style_solid)
+            label.new(currBar, currCvd, "ABS Bear" + star,
+                 color=ac, textcolor=color.white,
+                 style=label.style_label_down, size=size.small)
+            dSig  := "Bearish Absorption"
+            dCol  := ac
+            dAct  := "✅ SHORT — Sell-limit wall active"
+            dQual := tier == 3 ? "★★★ Strong wall"    :
+                     tier == 2 ? "★★☆ Clear absorption" : "★☆☆ Weak — wait for confirm"
+            dBar  := currBar
+            dTier := tier
+            dBull := false
+            dAbs  := true
+            alert("BEARISH ABS" + star + " | Price:LH CVD:HH | Sell limits absorbing bids",
+                 alert.freq_once_per_bar_close)
+
+    // State update AFTER comparison block (same position as original)
+    lastPhCvd   := cvd[lbR]
+    lastPhPrice := high[lbR]
+    lastPhBar   := bar_index - lbR
+
+// ═════════════════════════════════════════════════════════════════════
+//  BULLISH SIGNALS  (CVD Pivot Lows)
+// ═════════════════════════════════════════════════════════════════════
+if not na(pivotLow)
+    currBar = bar_index - lbR
+    dist    = currBar - lastPlBar
+
+    if not na(lastPlBar) and dist >= minDist and dist <= maxDist
+        currCvd   = cvd[lbR]
+        currPrice = low[lbR]
+
+        // ── Strength tier ─────────────────────────────────────────────
+        pDiff = math.abs(currPrice - lastPlPrice) / prcRange
+        cDiff = math.abs(currCvd   - lastPlCvd)   / cvdRange
+        ratio = pDiff > 0.005 ? math.min(cDiff / pDiff, 6.0) : (cDiff > 0.12 ? 3.0 : 1.0)
+        tier  = ratio > 2.2 ? 3 : ratio > 0.9 ? 2 : 1
+        lw    = tier == 3 ? 3 : tier == 2 ? 2 : 1
+        star  = tier == 3 ? " ★★★" : tier == 2 ? " ★★☆" : " ★☆☆"
+
+        // ── BULLISH EXHAUSTION : Price LL  +  CVD HL ─────────────────
+        //    Sellers printing lower lows but selling pressure shrinking →
+        //    trend losing fuel, reversal possible
+        if currPrice < lastPlPrice and currCvd > lastPlCvd
+            ec = tier == 3 ? C_EXH_3 : tier == 2 ? C_EXH_2 : C_EXH_1
+            line.new(lastPlBar, lastPlCvd, currBar, currCvd,
+                 color=ec, width=lw, style=line.style_dashed)
+            label.new(currBar, currCvd, "EXH Bull" + star,
+                 color=ec, textcolor=color.white,
+                 style=label.style_label_up, size=size.small)
+            dSig  := "Bullish Exhaustion"
+            dCol  := ec
+            dAct  := "⚠ Tighten shorts / Sniper long"
+            dQual := tier == 3 ? "★★★ Sellers stalling hard" :
+                     tier == 2 ? "★★☆ Momentum weakening"    : "★☆☆ Marginal — confirm"
+            dBar  := currBar
+            dTier := tier
+            dBull := true
+            dAbs  := false
+            alert("BULLISH EXH" + star + " | Price:LL CVD:HL | Sellers exhausted",
+                 alert.freq_once_per_bar_close)
+
+        // ── BULLISH ABSORPTION : Price HL  +  CVD LL ─────────────────
+        //    Sellers hammering (CVD falling) but price holds →
+        //    passive buy-limit wall absorbing every offer → long cont.
+        else if currPrice > lastPlPrice and currCvd < lastPlCvd
+            ac = tier == 3 ? C_BULL_3 : tier == 2 ? C_BULL_2 : C_BULL_1
+            line.new(lastPlBar, lastPlCvd, currBar, currCvd,
+                 color=ac, width=lw, style=line.style_solid)
+            label.new(currBar, currCvd, "ABS Bull" + star,
+                 color=ac, textcolor=color.white,
+                 style=label.style_label_up, size=size.small)
+            dSig  := "Bullish Absorption"
+            dCol  := ac
+            dAct  := "✅ LONG — Buy-limit wall active"
+            dQual := tier == 3 ? "★★★ Strong wall"    :
+                     tier == 2 ? "★★☆ Clear absorption" : "★☆☆ Weak — wait for confirm"
+            dBar  := currBar
+            dTier := tier
+            dBull := true
+            dAbs  := true
+            alert("BULLISH ABS" + star + " | Price:HL CVD:LL | Buy limits absorbing offers",
+                 alert.freq_once_per_bar_close)
+
+    // State update AFTER comparison block
+    lastPlCvd   := cvd[lbR]
+    lastPlPrice := low[lbR]
+    lastPlBar   := bar_index - lbR
+
+// ═════════════════════════════════════════════════════════════════════
+//  TRADE DECISION DASHBOARD
+// ═════════════════════════════════════════════════════════════════════
+if showTable and barstate.islast
+    var table dash = table.new(position.top_right, 2, 13,
+         bgcolor      = color.new(#08080f, 8),
+         border_width = 1,
+         border_color = color.new(color.gray, 55),
+         frame_width  = 1,
+         frame_color  = color.new(color.gray, 35))
+
+    // Header
+    table.cell(dash, 0, 0, "⚡  CVD  DASHBOARD",
+         text_color   = color.white,
+         text_size    = size.small,
+         text_halign  = text.align_center,
+         bgcolor      = color.new(#1a1a3e, 0))
+    table.merge_cells(dash, 0, 0, 1, 0)
+
+    // ── Market context ───────────────────────────────────────────────
+    tStr = cvd > cvd_ma ? "▲  Bullish Flow" : "▼  Bearish Flow"
+    tCol = cvd > cvd_ma ? color.teal : color.red
+    table.cell(dash, 0, 1, "CVD Flow", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 1, tStr,       text_color=tCol,       text_size=size.tiny)
+
+    sp    = cvd - cvd_ma
+    spPct = math.abs(cvd_ma) > 0 ? sp / math.abs(cvd_ma) * 100 : 0.0
+    spStr = (spPct >= 0 ? "+" : "") + str.tostring(math.round(spPct, 1)) + "%"
+    spCol = spPct >= 0 ? color.teal : color.red
+    table.cell(dash, 0, 2, "vs MA", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 2, spStr,   text_color=spCol,      text_size=size.tiny)
+
+    // ── Separator ────────────────────────────────────────────────────
+    table.cell(dash, 0, 3, "───  Last Signal  ───",
+         bgcolor=color.new(#1a1a3e, 0), text_color=color.new(color.gray, 25),
+         text_size=size.tiny, text_halign=text.align_center)
+    table.merge_cells(dash, 0, 3, 1, 3)
+
+    // Signal name
+    table.cell(dash, 0, 4, "Signal", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 4, dSig,     text_color=dCol,       text_size=size.tiny)
+
+    // Strength
+    stStr = na(dTier) ? "—" :
+            dTier==3  ? "★★★  Strong"  :
+            dTier==2  ? "★★☆  Medium"  : "★☆☆  Weak"
+    stCol = na(dTier) ? color.gray :
+            dTier==3  ? color.lime  :
+            dTier==2  ? color.orange : color.new(color.gray, 20)
+    table.cell(dash, 0, 5, "Strength", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 5, stStr,      text_color=stCol,      text_size=size.tiny)
+
+    // Age
+    ageStr = na(dBar) ? "—" : str.tostring(bar_index - dBar) + "  bars ago"
+    table.cell(dash, 0, 6, "Age",  text_color=color.gray,  text_size=size.tiny)
+    table.cell(dash, 1, 6, ageStr, text_color=color.white, text_size=size.tiny)
+
+    // ── Separator ────────────────────────────────────────────────────
+    table.cell(dash, 0, 7, "───  Trade Decision  ───",
+         bgcolor=color.new(#1a1a3e, 0), text_color=color.new(color.gray, 25),
+         text_size=size.tiny, text_halign=text.align_center)
+    table.merge_cells(dash, 0, 7, 1, 7)
+
+    // Action
+    table.cell(dash, 0, 8, "Action", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 8, dAct,     text_color=dCol,       text_size=size.tiny)
+
+    // Quality description
+    table.cell(dash, 0, 9, "Quality", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 9, dQual,     text_color=dCol,       text_size=size.tiny)
+
+    // Trend alignment  (signal direction == current CVD trend?)
+    bool aligned = (dBull == true  and cvd > cvd_ma) or
+                   (dBull == false and cvd < cvd_ma)
+    alStr = na(dBull) ? "—" : aligned ? "✓  Trend-aligned  ↑ prob" : "✗  Counter-trend  ↓ prob"
+    alCol = na(dBull) ? color.gray : aligned ? color.lime : color.orange
+    table.cell(dash, 0, 10, "Trend Align", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 10, alStr,         text_color=alCol,      text_size=size.tiny)
+
+    // Pattern type
+    patStr = na(dAbs) ? "—" :
+             dAbs     ? "Absorption  →  continuation" : "Exhaustion  →  reversal risk"
+    patCol = na(dAbs) ? color.gray : dAbs ? color.lime : color.orange
+    table.cell(dash, 0, 11, "Pattern", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 11, patStr,    text_color=patCol,     text_size=size.tiny)
+
+    // Legend
+    table.cell(dash, 0, 12,
+         "Solid = ABS (trade entry)\nDashed = EXH (caution / exit)",
+         bgcolor     = color.new(#1a1a3e, 0),
+         text_color  = color.new(color.gray, 20),
+         text_size   = size.tiny,
+         text_halign = text.align_center)
+    table.merge_cells(dash, 0, 12, 1, 12)
