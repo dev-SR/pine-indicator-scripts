@@ -1,0 +1,267 @@
+//@version=5
+indicator("Fair Value Gap (FVG)", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+fvgEnabled = input.bool(true, "Enable FVG", group="Fair Value Gaps")
+fvgSensitivity = input.int(2, "Sensitivity (0-25)", minval=0, maxval=25, tooltip="0 detects all FVGs, higher values filter smaller gaps", group="Fair Value Gaps")
+fvgDetection = input.string("All", "Detection Type", options=["All", "Same", "Mixed"], tooltip="All: Both types, Same: All 3 bars same type, Mixed: Bar types vary", group="Fair Value Gaps")
+fvgInvalidation = input.string("Close", "Invalidation", options=["Wick", "Close"], tooltip="How FVG zones get invalidated", group="Fair Value Gaps")
+showMidline = input.bool(true, "Show Midline", group="Fair Value Gaps")
+showVolumetric = input.bool(true, "Show Volumetric Info", group="Fair Value Gaps")
+showHistoric = input.bool(false, "Show Historic Zones", group="Fair Value Gaps")
+maxZones = input.int(10, "Visible Extended Zones", minval=1, maxval=50, group="Fair Value Gaps")
+
+// Colors
+bullishColor = input.color(color.new(color.green, 85), "Bullish FVG", group="Colors")
+bearishColor = input.color(color.new(color.red, 85), "Bearish FVG", group="Colors")
+bullishBorder = input.color(color.new(color.green, 40), "Bullish Border", group="Colors")
+bearishBorder = input.color(color.new(color.red, 40), "Bearish Border", group="Colors")
+
+// ============================================================================
+// FVG DETECTION
+// ============================================================================
+
+// Type: UDT for storing FVG data
+type FVGZone
+    box zoneBox
+    line midLine
+    label highVolLabel
+    label lowVolLabel
+    float top
+    float bottom
+    int startBar
+    bool isBullish
+    float highVol
+    float lowVol
+    bool isValid
+
+var array<FVGZone> bullishFVGs = array.new<FVGZone>()
+var array<FVGZone> bearishFVGs = array.new<FVGZone>()
+
+// Calculate if bars are bullish/bearish
+isBullishBar(index) =>
+    close[index] > open[index]
+
+isBearishBar(index) =>
+    close[index] < open[index]
+
+// Detect Bullish FVG (gap between bar[2].low and bar[0].high)
+detectBullishFVG() =>
+    bool detected = false
+    float gapTop = na
+    float gapBottom = na
+    float highVol = na
+    float lowVol = na
+    
+    // Check if there's a gap
+    if low[0] > high[2]
+        gapSize = low[0] - high[2]
+        gapPercent = (gapSize / high[2]) * 100
+        
+        // Apply sensitivity filter
+        minGap = fvgSensitivity * 0.01 // Convert to percentage
+        
+        if gapPercent >= minGap
+            // Check detection type
+            validDetection = false
+            
+            if fvgDetection == "All"
+                validDetection := true
+            else if fvgDetection == "Same"
+                validDetection := isBullishBar(0) and isBullishBar(1) and isBullishBar(2)
+            else if fvgDetection == "Mixed"
+                validDetection := not (isBullishBar(0) and isBullishBar(1) and isBullishBar(2))
+            
+            if validDetection
+                detected := true
+                gapTop := low[0]
+                gapBottom := high[2]
+                // Volume calculation: high volume = last 2 bars, low volume = total - high
+                highVol := volume[0] + volume[1]
+                lowVol := volume[2]
+    
+    [detected, gapTop, gapBottom, highVol, lowVol]
+
+// Detect Bearish FVG (gap between bar[2].high and bar[0].low)
+detectBearishFVG() =>
+    bool detected = false
+    float gapTop = na
+    float gapBottom = na
+    float highVol = na
+    float lowVol = na
+    
+    // Check if there's a gap
+    if high[0] < low[2]
+        gapSize = low[2] - high[0]
+        gapPercent = (gapSize / low[2]) * 100
+        
+        // Apply sensitivity filter
+        minGap = fvgSensitivity * 0.01
+        
+        if gapPercent >= minGap
+            // Check detection type
+            validDetection = false
+            
+            if fvgDetection == "All"
+                validDetection := true
+            else if fvgDetection == "Same"
+                validDetection := isBearishBar(0) and isBearishBar(1) and isBearishBar(2)
+            else if fvgDetection == "Mixed"
+                validDetection := not (isBearishBar(0) and isBearishBar(1) and isBearishBar(2))
+            
+            if validDetection
+                detected := true
+                gapTop := low[2]
+                gapBottom := high[0]
+                // Volume calculation: low volume = last 2 bars
+                highVol := volume[2]
+                lowVol := volume[0] + volume[1]
+    
+    [detected, gapTop, gapBottom, highVol, lowVol]
+
+// Check if FVG is invalidated
+checkInvalidation(fvg) =>
+    isInvalid = false
+    
+    if fvg.isBullish
+        if fvgInvalidation == "Wick"
+            isInvalid := low <= fvg.bottom
+        else
+            isInvalid := close <= fvg.bottom
+    else
+        if fvgInvalidation == "Wick"
+            isInvalid := high >= fvg.top
+        else
+            isInvalid := close >= fvg.top
+    
+    isInvalid
+
+// Create FVG Zone
+createFVGZone(top, bottom, isBullish, highVol, lowVol) =>
+    fvg = FVGZone.new()
+    fvg.top := top
+    fvg.bottom := bottom
+    fvg.startBar := bar_index - 2  // FVG starts from first bar of formation
+    fvg.isBullish := isBullish
+    fvg.highVol := highVol
+    fvg.lowVol := lowVol
+    fvg.isValid := true
+    
+    // Create box
+    boxColor = isBullish ? bullishColor : bearishColor
+    borderColor = isBullish ? bullishBorder : bearishBorder
+    fvg.zoneBox := box.new(fvg.startBar, top, bar_index + 10, bottom, 
+         border_color=borderColor, bgcolor=boxColor, 
+         border_width=1, extend=extend.none)
+    
+    // Create midline
+    if showMidline
+        midPrice = (top + bottom) / 2
+        fvg.midLine := line.new(fvg.startBar, midPrice, bar_index + 10, midPrice,
+             color=borderColor, width=1, style=line.style_dashed)
+    
+    // Create volume labels
+    if showVolumetric
+        fvg.highVolLabel := label.new(fvg.startBar, top, 
+             text="H:" + str.tostring(highVol, format.volume),
+             style=label.style_none, textcolor=borderColor, size=size.tiny)
+        fvg.lowVolLabel := label.new(fvg.startBar, bottom,
+             text="L:" + str.tostring(lowVol, format.volume),
+             style=label.style_none, textcolor=borderColor, size=size.tiny)
+    
+    fvg
+
+// Update zone extension
+updateZone(fvg) =>
+    if not na(fvg.zoneBox)
+        box.set_right(fvg.zoneBox, bar_index + 10)
+    
+    if showMidline and not na(fvg.midLine)
+        line.set_x2(fvg.midLine, bar_index + 10)
+
+// Delete zone
+deleteZone(fvg) =>
+    if not na(fvg.zoneBox)
+        box.delete(fvg.zoneBox)
+    if not na(fvg.midLine)
+        line.delete(fvg.midLine)
+    if not na(fvg.highVolLabel)
+        label.delete(fvg.highVolLabel)
+    if not na(fvg.lowVolLabel)
+        label.delete(fvg.lowVolLabel)
+
+// ============================================================================
+// MAIN LOGIC
+// ============================================================================
+
+if fvgEnabled and barstate.isconfirmed
+    // Detect new FVGs
+    [bullDetected, bullTop, bullBottom, bullHighVol, bullLowVol] = detectBullishFVG()
+    [bearDetected, bearTop, bearBottom, bearHighVol, bearLowVol] = detectBearishFVG()
+    
+    // Create bullish FVG
+    if bullDetected
+        newFVG = createFVGZone(bullTop, bullBottom, true, bullHighVol, bullLowVol)
+        array.push(bullishFVGs, newFVG)
+    
+    // Create bearish FVG
+    if bearDetected
+        newFVG = createFVGZone(bearTop, bearBottom, false, bearHighVol, bearLowVol)
+        array.push(bearishFVGs, newFVG)
+    
+    // Update and check existing bullish FVGs
+    validCount = 0
+    if array.size(bullishFVGs) > 0
+        for i = array.size(bullishFVGs) - 1 to 0
+            fvg = array.get(bullishFVGs, i)
+            
+            if fvg.isValid
+                // Check invalidation
+                if checkInvalidation(fvg)
+                    fvg.isValid := false
+                    if not showHistoric
+                        deleteZone(fvg)
+                        array.remove(bullishFVGs, i)
+                else
+                    validCount += 1
+                    if validCount <= maxZones
+                        updateZone(fvg)
+                    else
+                        // Beyond max zones, stop extending
+                        if not showHistoric
+                            deleteZone(fvg)
+                            array.remove(bullishFVGs, i)
+    
+    // Update and check existing bearish FVGs
+    validCount := 0
+    if array.size(bearishFVGs) > 0
+        for i = array.size(bearishFVGs) - 1 to 0
+            fvg = array.get(bearishFVGs, i)
+            
+            if fvg.isValid
+                // Check invalidation
+                if checkInvalidation(fvg)
+                    fvg.isValid := false
+                    if not showHistoric
+                        deleteZone(fvg)
+                        array.remove(bearishFVGs, i)
+                else
+                    validCount += 1
+                    if validCount <= maxZones
+                        updateZone(fvg)
+                    else
+                        if not showHistoric
+                            deleteZone(fvg)
+                            array.remove(bearishFVGs, i)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+[bullDetected, _, _, _, _] = detectBullishFVG()
+[bearDetected, _, _, _, _] = detectBearishFVG()
+
+alertcondition(bullDetected, "Bullish FVG Detected", "New Bullish Fair Value Gap formed")
+alertcondition(bearDetected, "Bearish FVG Detected", "New Bearish Fair Value Gap formed")

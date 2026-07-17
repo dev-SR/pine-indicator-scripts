@@ -1,0 +1,556 @@
+//Example 1:
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © fluxchart
+
+//@version=5
+const bool DEBUG = false
+const int maxBoxesCount = 500
+const int maxDistanceToLastBar = 750 // Affects Running Time
+const int atrLen = 14
+const int deleteUntouchedAfterXBars = 200
+const int showLastX = 25
+
+BOSenable = true
+CHoCHenable = true
+CHoCHPlusenable = true
+
+EQHEnabled = false
+EQLEnabled = false
+EQPMultiplier = 0.2
+
+indicator(title = 'Market Structures Screener | Flux Charts', overlay = true, max_boxes_count = maxBoxesCount, max_labels_count = maxBoxesCount, max_lines_count = maxBoxesCount, max_bars_back = 5000)
+
+tickersPreset = DEBUG ? input.string("Crypto", "", options = ["Crypto", "Stocks", "Forex", "Futures", "Custom"], inline = "a", group = "Tickers", display = display.none) : "Custom"
+overrideTF = DEBUG ? input.timeframe("", "", group = "Tickers", inline = "a", display = display.none) : ""
+
+warning = input.color(color.black, "Please only select timeframes >= than the current chart.", group = "Tickers", inline = "warning", display = display.none)
+
+ticker1EnabledCustom = input.bool(true, "", group = "Tickers", inline = "1", display = display.none)
+ticker1Custom = input.symbol("BINANCE:BTCUSDT", "1.", group = "Tickers", inline = "1", display = display.none)
+ticker1TFCustom = input.timeframe("", "", group = "Tickers", inline = "1", display = display.none)
+
+ticker2EnabledCustom = input.bool(true, "", group = "Tickers", inline = "2", display = display.none)
+ticker2Custom = input.symbol("BINANCE:ETHUSDT", "2.", group = "Tickers", inline = "2", display = display.none)
+ticker2TFCustom = input.timeframe("", "", group = "Tickers", inline = "2", display = display.none)
+
+ticker3EnabledCustom = input.bool(true, "", group = "Tickers", inline = "3", display = display.none)
+ticker3Custom = input.symbol("BINANCE:SOLUSDT", "3.", group = "Tickers", inline = "3", display = display.none)
+ticker3TFCustom = input.timeframe("", "", group = "Tickers", inline = "3", display = display.none)
+
+ticker4EnabledCustom = input.bool(true, "", group = "Tickers", inline = "4", display = display.none)
+ticker4Custom = input.symbol("BINANCE:DOGEUSDT", "4.", group = "Tickers", inline = "4", display = display.none)
+ticker4TFCustom = input.timeframe("", "", group = "Tickers", inline = "4", display = display.none)
+
+ticker5EnabledCustom = input.bool(true, "", group = "Tickers", inline = "5", display = display.none)
+ticker5Custom = input.symbol("BINANCE:BNBUSDT", "5.", group = "Tickers", inline = "5", display = display.none)
+ticker5TFCustom = input.timeframe("", "", group = "Tickers", inline = "5", display = display.none)
+
+screenerPosition = input.string("Top Center", "Position", options = ["Top Right", "Top Center", "Right Center", "Middle Center", "Left Center", "Bottom Center"], group = "Style", display = display.none)
+fillBackgrounds = input.bool(true, "Fill Backgrounds", group = "Style", display = display.none)
+screenerColor = input.color(#1B1F2B, 'Background', group = 'Style', display = display.none)
+frameColor = input.color(color.rgb(255, 255, 255), 'Frame', group = 'Style', display = display.none)
+borderColor = input.color(color.rgb(255, 255, 255), 'Border', group = 'Style', display = display.none)
+textColor = input.color(color.white, 'Text', group = 'Style', display = display.none)
+bullishColor = input.color(#089981, 'Bullish', inline = 'obColor', group = 'Style', display = display.none)
+bearishColor = input.color(#ff5252, 'Bearish', inline = 'obColor', group = 'Style', display = display.none)
+
+atr = ta.atr(atrLen)
+
+getPosition (positionText) =>
+    if positionText == "Top Right"
+        position.top_right
+    else if positionText == "Top Center"
+        position.top_center
+    else if positionText == "Right Center"
+        position.middle_right
+    else if positionText == "Left Center"
+        position.middle_left
+    else if positionText == "Bottom Center"
+        position.bottom_center
+    else if positionText == "Middle Center"
+        position.middle_center
+
+var table screener = table.new(getPosition(screenerPosition), 10, 10, bgcolor = screenerColor, frame_width = 2, frame_color = frameColor, border_width = 1, border_color = borderColor)
+
+
+// ____ TYPES END ____
+
+ticker1 = ""
+ticker1TF = overrideTF
+ticker1Enabled = true
+
+ticker2 = ""
+ticker2TF = overrideTF
+ticker2Enabled = true
+
+ticker3 = ""
+ticker3TF = overrideTF
+ticker3Enabled = true
+
+ticker4 = ""
+ticker4TF = overrideTF
+ticker4Enabled = true
+
+ticker5 = ""
+ticker5TF = overrideTF
+ticker5Enabled = true
+
+if tickersPreset == "Crypto"
+    ticker1 := "BINANCE:BTCUSDT"
+    ticker2 := "BINANCE:ETHUSDT"
+    ticker3 := "BINANCE:SOLUSDT"
+    ticker4 := "BINANCE:XRPUSDT"
+    ticker5 := "BINANCE:ADAUSDT"
+else if tickersPreset == "Stocks"
+    ticker1 := "NASDAQ:AAPL"
+    ticker2 := "NASDAQ:TSLA"
+    ticker3 := "NASDAQ:NVDA"
+    ticker4 := "PYTH:SPY"
+    ticker5 := "NASDAQ:QQQ"
+else if tickersPreset == "Forex"
+    ticker1 := "OANDA:EURUSD"
+    ticker2 := "OANDA:GBPUSD"
+    ticker3 := "OANDA:USDJPY"
+    ticker4 := "OANDA:GBPJPY"
+    ticker5 := "OANDA:AUDUSD"
+else if tickersPreset == "Futures"
+    ticker1 := "CME_MINI:ES1!"
+    ticker2 := "CME_MINI:NQ1!"
+    ticker3 := "NYMEX:CL1!"
+    ticker4 := "COMEX:GC1!"
+    ticker5 := "CBOT_MINI:YM1!"
+if tickersPreset == "Custom"
+    ticker1 := ticker1Custom
+    ticker1TF := ticker1TFCustom
+    ticker1Enabled := ticker1EnabledCustom
+
+    ticker2 := ticker2Custom
+    ticker2TF := ticker2TFCustom
+    ticker2Enabled := ticker2EnabledCustom
+
+    ticker3 := ticker3Custom
+    ticker3TF := ticker3TFCustom
+    ticker3Enabled := ticker3EnabledCustom
+
+    ticker4 := ticker4Custom
+    ticker4TF := ticker4TFCustom
+    ticker4Enabled := ticker4EnabledCustom
+
+    ticker5 := ticker5Custom
+    ticker5TF := ticker5TFCustom
+    ticker5Enabled := ticker5EnabledCustom
+
+moveLine(_line, _x, _y, _x2) =>
+    line.set_xy1(_line, _x,  _y)
+    line.set_xy2(_line, _x2, _y)
+
+moveBox (_box, _topLeftX, _topLeftY, _bottomRightX, _bottomRightY) =>
+    box.set_lefttop(_box, _topLeftX, _topLeftY)
+    box.set_rightbottom(_box, _bottomRightX, _bottomRightY)
+
+isTimeframeLower (timeframe1F, timeframe2F) =>
+    timeframe.in_seconds(timeframe1F) < timeframe.in_seconds(timeframe2F)
+
+getMinTimeframe (timeframe1F, timeframe2F) =>
+    if isTimeframeLower(timeframe1F, timeframe2F)
+        timeframe1F
+    else
+        timeframe2F
+
+getMaxTimeframe (timeframe1F, timeframe2F) =>
+    if isTimeframeLower(timeframe1F, timeframe2F)
+        timeframe2F
+    else
+        timeframe1F
+
+formatTimeframeString (formatTimeframe) =>
+    timeframeF = formatTimeframe == "" ? timeframe.period : formatTimeframe
+    
+    if str.contains(timeframeF, "D") or str.contains(timeframeF, "W") or str.contains(timeframeF, "S") or str.contains(timeframeF, "M")
+        timeframeF
+    else
+        seconds = timeframe.in_seconds(timeframeF)
+        if seconds >= 3600
+            hourCount = int(seconds / 3600)
+            str.tostring(hourCount) + " Hour" + (hourCount > 1 ? "s" : "")
+        else
+            timeframeF + " Min"
+
+//#region Market Structures
+type labelPlot
+    int barIndex
+    color displayColor
+    string labelText
+    float y
+    int x
+    string labelStyle
+
+createLabel(x, y, color=color.blue, labelText, style, barIndex) =>
+    labelPlot.new(barIndex, color, labelText, y, x, style)
+
+type linePlot
+    int barIndex
+    color displayColor
+    float y1
+    float y2
+    int x1
+    int x2
+    string lineStyle
+
+createLine(x1, x2, y1, y2, lineColor, lineStyle, barIndex) =>
+    linePlot.new(barIndex, lineColor, y1, y2, x1, x2, lineStyle)
+
+type marketStructureInfo
+    labelPlot structureLabel = na
+    linePlot structureLine = na
+
+    linePlot EQPLine = na
+    labelPlot EQPLabel = na
+
+convertTimeToStr (ms) =>
+    seconds = int(ms / 1000)
+    if seconds >= 86400
+        daysCount = int(seconds / 86400)
+        str.tostring(daysCount) + " Day" + (daysCount > 1 ? "s" : "")
+    else if seconds >= 3600
+        hourCount = int(seconds / 3600)
+        str.tostring(hourCount) + " Hour" + (hourCount > 1 ? "s" : "")
+    else
+        minCount = int(seconds / 60)
+        str.tostring(minCount) + " Min" + (minCount > 1 ? "s" : "")
+// ____ TYPES END ____
+
+var marketStructureInfo[] allMarketStructures = array.new<marketStructureInfo>(0)
+
+betterCross(s1, s2) =>
+    string ret = na
+    if s1 >= s2 and s1[1] < s2
+        ret := "Bull"
+    if s1 < s2 and s1[1] >= s2
+        ret := "Bear"
+    ret
+
+atrPivots(atrLength) =>
+    lowest = ta.lowest(low, atrLength)
+    highest = ta.highest(high, atrLength)
+
+    labelPlot ret = na
+    if time_close == time_close[1]
+        [0, 0, 0, 0]
+
+    var lastHighestIndex = 0
+    var lastHighestBarIndex = 0
+    var lastLowestIndex = 0
+    var lastLowestBarIndex = 0
+
+    var lastHighest = 0.0
+    var lastLowest = 0.0
+
+    var lastPivotHigh = 0
+    var lastPivotLow = 0
+
+    pivotHighNormal = ta.pivothigh(high, 14, 14)
+    pivotLowNormal = ta.pivotlow(low, 14, 14)
+
+    if highest > highest[1]
+        lastHighest := highest
+        lastHighestIndex := time_close[1]
+        lastHighestBarIndex := bar_index[1]
+
+    if lowest < lowest[1]
+        lastLowest := lowest
+        lastLowestIndex := time_close[1]
+        lastLowestBarIndex := bar_index[1]
+
+    if not na(pivotHighNormal) and time_close[14 + 1] != lastPivotHigh
+        lastPivotHigh := time_close[14 + 1]
+        ret := createLabel(time_close[14 + 1], pivotHighNormal, color.blue, "", label.style_label_down, bar_index[14 + 1])
+
+    if highest <= highest[1] and close + atr*(atrLength / 2.5) < lastHighest and lastHighestIndex != lastPivotHigh// and bar_index - lastHighestBarIndex > atrLength
+        lastPivotHigh := lastHighestIndex
+        ret := createLabel(lastHighestIndex, lastHighest, color.green, "", label.style_label_down, lastHighestBarIndex)
+    
+    else if not na(pivotLowNormal) and time_close[14 + 1] != lastPivotLow
+        lastPivotLow := time_close[14 + 1]
+        ret := createLabel(time_close[14 + 1], pivotLowNormal, color.blue, "", label.style_label_up, bar_index[14 + 1])
+
+    else if lowest >= lowest[1] and close - atr * (atrLength / 2.5) > lastLowest and lastLowestIndex != lastPivotLow // and bar_index - lastLowestBarIndex > atrLength
+        lastPivotLow := lastLowestIndex
+        ret := createLabel(lastLowestIndex, lastLowest, color.blue, "", label.style_label_up, lastLowestBarIndex)
+
+    ret
+
+calculateMarketStructure(pivotPointLabels, maxPivotLength, allPivotLabels) =>
+    labelPlot retLabel = na
+    linePlot retLine = na
+
+    var currentStructure = -1
+    var lastCHoCH = 0
+    var lastBOS = 0
+
+    var CHoCH = false
+
+    i = pivotPointLabels.size() - 1
+    while i >= 0
+        if i >= 0 and i < pivotPointLabels.size()
+            tempPivot = pivotPointLabels.get(i)
+            crossWay = betterCross(close, tempPivot.y)
+
+            if bar_index - tempPivot.barIndex > maxPivotLength
+                pivotPointLabels.remove(i)
+                continue
+            
+            if not na(crossWay)
+                CHoCH := ((crossWay == "Bull" and currentStructure == -1) or (crossWay == "Bear" and currentStructure == 1)) and tempPivot.barIndex + 3 > lastCHoCH and tempPivot.barIndex + 3 > lastBOS
+                BOS = ((crossWay == "Bull" and currentStructure == 1) or (crossWay == "Bear" and currentStructure == -1)) and tempPivot.barIndex + 3 > lastCHoCH and tempPivot.barIndex + 3 > lastBOS
+                // labelX := time_close[(bar_index - tempPivot.barIndex)/2]
+                // labelY := tempPivot.y
+                labelText = "BOS"
+                labelColor = crossWay == "Bull" ? color.green : color.red
+
+                if crossWay == "Bull"
+                    currentStructure := 1
+                else if crossWay == "Bear"
+                    currentStructure := -1
+
+                if BOS
+                    lastBOS := tempPivot.barIndex
+                else if CHoCH
+                    lastCHoCH := tempPivot.barIndex
+                    labelText := "CHoCH"
+                    j = allPivotLabels.size() - 1
+
+                    labelPlot lastLowerPivot = na
+                    labelPlot lastUpperPivot = na
+
+                    // if tempPivot.labelStyle == label.style_label_up
+                    //     lastLowerPivot := tempPivot
+                    // else
+                    //     lastUpperPivot := tempPivot
+
+                    while j >= 0
+                        tempPivot2 = allPivotLabels.get(j)
+
+                        if crossWay == "Bull"
+                            if tempPivot2.labelStyle == label.style_label_up
+                                if not na(lastLowerPivot)
+                                    if tempPivot2.y < lastLowerPivot.y
+                                        labelText := "CHoCH+"
+                                    break
+                                else
+                                    lastLowerPivot := tempPivot2
+                        if crossWay == "Bear"
+                            if tempPivot2.labelStyle == label.style_label_down
+                                if not na(lastUpperPivot)
+                                    if tempPivot2.y > lastUpperPivot.y
+                                        labelText := "CHoCH+"
+                                    break
+                                else
+                                    lastUpperPivot := tempPivot2
+
+                        // if tempPivot2.labelStyle == label.style_label_up
+                        //     lastLowerPivot := tempPivot2
+                        // else
+                        //     lastUpperPivot := tempPivot2
+                        
+                        j -= 1
+
+                    labelColor := crossWay == "Bull" ? color.green : color.red
+
+                if BOS or CHoCH
+                    retLabel := createLabel(time_close[(bar_index - tempPivot.barIndex)/2], tempPivot.y, labelColor, labelText, crossWay == "Bull" ? label.style_label_down : label.style_label_up, bar_index[(bar_index - tempPivot.barIndex)/2])
+                    retLine := createLine(time_close[bar_index - tempPivot.barIndex], time_close[1], tempPivot.y, tempPivot.y, labelColor, line.style_dotted, 0)
+                    if CHoCH and pivotPointLabels.size() > 2// and (pivotPointLabels.get(pivotPointLabels.size() - 1).labelStyle == label.style_label_down)
+                        lastPivot = pivotPointLabels.get(pivotPointLabels.size() - 1)
+                        pivotClose = close[bar_index - lastPivot.barIndex - 1]
+                        pivotOpen = open[bar_index - lastPivot.barIndex - 1]
+                        top = pivotClose > pivotOpen ? pivotClose : pivotOpen
+                        bottom = pivotClose > pivotOpen ? pivotOpen : pivotClose
+
+                pivotPointLabels.remove(i)
+                continue
+            
+        i -= 1
+    
+    if not na(retLabel) or not na(retLine)
+        newMarketStructure = marketStructureInfo.new(retLabel, retLine)
+        newMarketStructure
+    else
+        na
+
+handleMarketStructures () =>
+    pivotLabel = atrPivots(7)
+
+    var pivotLabels = array.new<labelPlot>(0)
+    var allPivotLabels = array.new<labelPlot>(0)
+    var labelPlot lastPivotLow = na
+    var labelPlot lastPivotHigh = na
+
+    linePlot EQPline = na
+    labelPlot EQPlabel = na
+
+    if not na(pivotLabel)
+        if pivotLabel.labelStyle == label.style_label_up
+            if not na(lastPivotLow)
+                if math.abs(lastPivotLow.y - pivotLabel.y) < atr * EQPMultiplier and lastPivotLow.x != pivotLabel.x
+                    yLevel = math.max(pivotLabel.y, lastPivotLow.y)
+                    barsBetween = math.abs(pivotLabel.barIndex - lastPivotLow.barIndex)
+                    if barsBetween > 3
+                        EQPline := createLine(lastPivotLow.x, pivotLabel.x, lastPivotLow.y, pivotLabel.y, color.red, line.style_dashed, pivotLabel.barIndex)
+                        EQPlabel := createLabel(time_close[(pivotLabel.barIndex - lastPivotLow.barIndex) / 2 + (bar_index - pivotLabel.barIndex)], yLevel, color.red, "EQL", label.style_label_up, (pivotLabel.barIndex + lastPivotLow.barIndex)/2)
+            
+            lastPivotLow := pivotLabel
+        else if pivotLabel.labelStyle == label.style_label_down
+            if not na(lastPivotHigh)
+                if math.abs(lastPivotHigh.y - pivotLabel.y) < atr * EQPMultiplier and lastPivotHigh.x != pivotLabel.x
+                    yLevel = math.min(pivotLabel.y, lastPivotHigh.y)
+                    barsBetween = math.abs(pivotLabel.barIndex - lastPivotHigh.barIndex)
+                    if barsBetween > 3
+                        EQPline := createLine(lastPivotHigh.x, pivotLabel.x, lastPivotHigh.y, pivotLabel.y, color.green, line.style_dashed, pivotLabel.barIndex)
+                        EQPlabel := createLabel(time_close[(pivotLabel.barIndex - lastPivotHigh.barIndex) / 2 + (bar_index - pivotLabel.barIndex)], yLevel, color.green, "EQH", label.style_label_down, (pivotLabel.barIndex + lastPivotHigh.barIndex) / 2)
+
+            lastPivotHigh := pivotLabel
+
+        pivotLabels.push(pivotLabel)
+        if pivotLabels.size() > 10
+            pivotLabels.remove(0)
+
+        allPivotLabels.push(pivotLabel)
+        if allPivotLabels.size() > 20
+            allPivotLabels.remove(0)
+
+    curMarketStructure = calculateMarketStructure(pivotLabels, deleteUntouchedAfterXBars, allPivotLabels)
+    if not na(curMarketStructure)
+        curMarketStructure.EQPLine := EQPline
+        curMarketStructure.EQPLabel := EQPlabel
+        allMarketStructures.unshift(curMarketStructure)
+    else if not na(EQPlabel)
+        curMarketStructure := marketStructureInfo.new()
+        curMarketStructure.EQPLine := EQPline
+        curMarketStructure.EQPLabel := EQPlabel
+        allMarketStructures.unshift(curMarketStructure)
+    
+    if allMarketStructures.size() > showLastX
+        deletedMarketStructure = allMarketStructures.pop()
+
+if bar_index > last_bar_index - maxDistanceToLastBar and barstate.isconfirmed
+    handleMarketStructures()
+//#endregion
+type tickerInfo
+    int index = na
+    string symbol
+    string timeframeStr = na
+    bool isEnabled = false
+
+    marketStructureInfo[] allMarketStructures
+    float closeF
+    float atrF
+
+var tickerInfo[] tickerInfos = array.from(tickerInfo.new(1, ticker1, ticker1TF, ticker1Enabled), tickerInfo.new(2, ticker2, ticker2TF, ticker2Enabled), tickerInfo.new(3, ticker3, ticker3TF, ticker3Enabled), tickerInfo.new(4, ticker4, ticker4TF, ticker4Enabled), tickerInfo.new(5, ticker5, ticker5TF, ticker5Enabled))
+
+getTFData (tickerInfo tickerInfoF, string symbolF, string timeframeF) =>
+    [allMarketStructuresF, closeF, atrF] = request.security(symbolF, timeframeF, [allMarketStructures, close, atr])
+    [allMarketStructuresF, closeF, atrF]
+
+[allMarketStructures1, closeTicker1, atrTicker1] = getTFData(tickerInfos.get(0), ticker1, ticker1TF)
+tickerInfo1 = tickerInfos.get(0)
+tickerInfo1.allMarketStructures := allMarketStructures1
+tickerInfo1.closeF := closeTicker1
+tickerInfo1.atrF := atrTicker1
+
+[allMarketStructures2, closeTicker2, atrTicker2] = getTFData(tickerInfos.get(1), ticker2, ticker2TF)
+tickerInfo2 = tickerInfos.get(1)
+tickerInfo2.allMarketStructures := allMarketStructures2
+tickerInfo2.closeF := closeTicker2
+tickerInfo2.atrF := atrTicker2
+
+[allMarketStructures3, closeTicker3, atrTicker3] = getTFData(tickerInfos.get(2), ticker3, ticker3TF)
+tickerInfo3 = tickerInfos.get(2)
+tickerInfo3.allMarketStructures := allMarketStructures3
+tickerInfo3.closeF := closeTicker3
+tickerInfo3.atrF := atrTicker3
+
+[allMarketStructures4, closeTicker4, atrTicker4] = getTFData(tickerInfos.get(3), ticker4, ticker4TF)
+tickerInfo4 = tickerInfos.get(3)
+tickerInfo4.allMarketStructures := allMarketStructures4
+tickerInfo4.closeF := closeTicker4
+tickerInfo4.atrF := atrTicker4
+
+[allMarketStructures5, closeTicker5, atrTicker5] = getTFData(tickerInfos.get(4), ticker5, ticker5TF)
+tickerInfo5 = tickerInfos.get(4)
+tickerInfo5.allMarketStructures := allMarketStructures5
+tickerInfo5.closeF := closeTicker5
+tickerInfo5.atrF := atrTicker5
+
+handleDashboard () =>
+    // Header
+    colCount = 4
+    table.merge_cells(screener, 0, 0, colCount,0)
+    table.cell(screener, 0, 0, "Market Structures Screener", text_color = textColor, bgcolor = screenerColor)
+
+    // Legend
+    table.cell(screener, 0, 1, "Symbol", text_color = textColor, bgcolor = screenerColor)
+    table.cell(screener, 1, 1, "Timeframe", text_color = textColor, bgcolor = screenerColor)
+    table.cell(screener, 2, 1, "BOS", text_color = textColor, bgcolor = screenerColor)
+    table.cell(screener, 3, 1, "CHoCH", text_color = textColor, bgcolor = screenerColor)
+    table.cell(screener, 4, 1, "CHoCH+", text_color = textColor, bgcolor = screenerColor)
+
+    // Tickers
+    tickerStart = 2
+    i = 0
+    for a = 0 to tickerInfos.size() - 1
+        curTickerInfo = tickerInfos.get(a)
+        if curTickerInfo.isEnabled == false
+            continue
+        
+        marketStructureInfo foundBoS = na
+        marketStructureInfo foundCHoCH = na
+        marketStructureInfo foundCHoCHP = na
+
+        if not na(curTickerInfo.allMarketStructures)
+            if curTickerInfo.allMarketStructures.size() > 0
+                for j = 0 to curTickerInfo.allMarketStructures.size() - 1
+                    marketStructureInfo curMarketStructure = curTickerInfo.allMarketStructures.get(j)
+                    if not na(curMarketStructure.structureLabel)
+                        if curMarketStructure.structureLabel.labelText == "BOS"
+                            foundBoS := curMarketStructure
+                            break
+                for j = 0 to curTickerInfo.allMarketStructures.size() - 1
+                    marketStructureInfo curMarketStructure = curTickerInfo.allMarketStructures.get(j)
+                    if not na(curMarketStructure.structureLabel)
+                        if curMarketStructure.structureLabel.labelText == "CHoCH"
+                            foundCHoCH := curMarketStructure
+                            break
+                for j = 0 to curTickerInfo.allMarketStructures.size() - 1
+                    marketStructureInfo curMarketStructure = curTickerInfo.allMarketStructures.get(j)
+                    if not na(curMarketStructure.structureLabel)
+                        if curMarketStructure.structureLabel.labelText == "CHoCH+"
+                            foundCHoCHP := curMarketStructure
+                            break
+        
+        BoSStatus = na(foundBoS) ? "None" : na(foundBoS.structureLabel) ? "None" : convertTimeToStr(time - foundBoS.structureLine.x2) + " Ago"
+        BoSColor = screenerColor
+        if BoSStatus != "None"
+            BoSStatus := (foundBoS.structureLabel.displayColor == color.green ? "🟢" : "🔴") + " | " + BoSStatus
+            BoSColor := fillBackgrounds ? ((foundBoS.structureLabel.displayColor == color.green) ? bullishColor : bearishColor) : screenerColor
+        
+        CHoCHStatus = na(foundCHoCH) ? "None" : na(foundCHoCH.structureLabel) ? "None" : convertTimeToStr(time - foundCHoCH.structureLine.x2) + " Ago"
+        CHoCHColor = screenerColor
+        if CHoCHStatus != "None"
+            CHoCHStatus := (foundCHoCH.structureLabel.displayColor == color.green ? "🟢" : "🔴") + " | " + CHoCHStatus
+            CHoCHColor := fillBackgrounds ? ((foundCHoCH.structureLabel.displayColor == color.green) ? bullishColor : bearishColor) : screenerColor
+
+        CHoCHPStatus = na(foundCHoCHP) ? "None" : na(foundCHoCHP.structureLabel) ? "None" : convertTimeToStr(time - foundCHoCHP.structureLine.x2) + " Ago"
+        CHoCHPColor = screenerColor
+        if CHoCHPStatus != "None"
+            CHoCHPStatus := (foundCHoCHP.structureLabel.displayColor == color.green ? "🟢" : "🔴") + " | " + CHoCHPStatus
+            CHoCHPColor := fillBackgrounds ? ((foundCHoCHP.structureLabel.displayColor == color.green) ? bullishColor : bearishColor) : screenerColor
+
+        table.cell(screener, 0, tickerStart + i, syminfo.ticker(curTickerInfo.symbol), text_color = textColor, bgcolor = screenerColor)
+        table.cell(screener, 1, tickerStart + i, str.tostring(formatTimeframeString(curTickerInfo.timeframeStr)) + " 🕒", text_color = textColor, bgcolor = screenerColor)
+        table.cell(screener, 2, tickerStart + i, BoSStatus, text_color = textColor, bgcolor = (BoSStatus == "None" ? screenerColor : BoSColor))
+        table.cell(screener, 3, tickerStart + i, CHoCHStatus, text_color = textColor, bgcolor = (CHoCHStatus == "None" ? screenerColor : CHoCHColor))
+        table.cell(screener, 4, tickerStart + i, CHoCHPStatus, text_color = textColor, bgcolor = (CHoCHPStatus == "None" ? screenerColor : CHoCHPColor))
+        i += 1
+
+handleDashboard()

@@ -1,0 +1,284 @@
+//@version=6
+indicator(title = 'Mayfair Fx Scalper V8 By EWC', shorttitle = '', overlay = true, precision = 4, max_bars_back = 1000, max_lines_count = 500)
+
+// Settings for VIP MFX Ultimate Scalper [alihiderofficial]
+h = input.int(70, 'MM Source', tooltip='The number of bars used for the estimation. Recommended range: 3-50')
+alpha = input.float(4.75, 'SOURCE OF TRADING', step=0.25, tooltip='Relative weighting of time frames. Recommended range: 0.25-25')
+x_0 = input.int(11, "CHANGINING TP", tooltip='Bar index on which to start regression. Recommended range: 5-25')
+atr_length = input.int(32, 'Length', minval=1, tooltip='The number of bars associated with the Average True Range (ATR).')
+nearFactor = input.float(3.4, ' ATR Factor', minval=0.5, step=0.1, tooltip='Recommended range: 0.5-2.0')
+farFactor = input.float(10, 'Far Factor', minval=1.0, step=0.25, tooltip='Recommended range: 6.0-8.0')
+confirmToggle = input.bool(true, title="Enable Confirmation")
+confirmationValue = input.float(60, title="Confirmation Threshold", tooltip='Threshold value for confirmation')
+
+// Libraries
+import jdehorty/KernelFunctions/2 as kernels
+
+// Helper Functions
+getBounds(_atr, _nearFactor, _farFactor, _yhat) =>
+    _upper_far = _yhat + _farFactor * _atr
+    _upper_near = _yhat + _nearFactor * _atr
+    _lower_near = _yhat - _nearFactor * _atr
+    _lower_far = _yhat - _farFactor * _atr
+    _upper_avg = (_upper_far + _upper_near) / 2
+    _lower_avg = (_lower_far + _lower_near) / 2
+    [_upper_near, _upper_far, _upper_avg, _lower_near, _lower_far, _lower_avg]
+
+kernel_atr(length, _high, _low, _close) =>
+    trueRange = na(_high[1]) ? _high - _low : math.max(math.max(_high - _low, math.abs(_high - _close[1])), math.abs(_low - _close[1]))
+    ta.rma(trueRange, length)
+
+// Envelope Calculations
+yhat_close = kernels.rationalQuadratic(close, h, alpha, x_0)
+yhat_high = kernels.rationalQuadratic(high, h, alpha, x_0)
+yhat_low = kernels.rationalQuadratic(low, h, alpha, x_0)
+yhat = yhat_close
+ktr = kernel_atr(atr_length, yhat_high, yhat_low, yhat_close)
+[upper_near, upper_far, upper_avg, lower_near, lower_far, lower_avg] = getBounds(ktr, nearFactor, farFactor, yhat_close)
+
+// Colors and Transparency Adjustments
+red_far = input.color(color.new(#1c5ffa, 75), title='Upper Boundary Color: Far')
+red_near = input.color(color.new(#205fff, 90), title='Upper Boundary Color: Near')
+yhat_green = input.color(color.new(#ceddff, 100), title='Bullish Estimator Color')
+yhat_red = input.color(color.new(#1c55ff, 100), title='Bearish Estimator Color')
+green_near = input.color(color.new(#d5e0ff, 90), title='Lower Boundary Color: Near')
+green_far = input.color(color.new(#b2c8ff, 96), title='Lower Boundary Color: Far')
+
+// Plots for Mayfaifx Scalper V8
+p_upper_far = plot(upper_far, color=red_far, title='Upper External Heat Zone', linewidth=1)
+p_upper_avg = plot(upper_avg, color=red_near, title='', linewidth=1)
+p_upper_near = plot(upper_near, color=red_near, title='Upper External Heat Zone', linewidth=1)
+
+p_lower_near = plot(lower_near, color=green_near, title='Lower Internal Heat Zone', linewidth=1)
+p_lower_avg = plot(lower_avg, color=green_near, title='', linewidth=1)
+p_lower_far = plot(lower_far, color=green_far, title='Lower Internal Heat Zone', linewidth=1)
+
+// Fills with Adjusted Transparency
+fill(p_upper_far, p_upper_avg, color=red_far, title='Upper Boundary: Farmost Region')
+fill(p_upper_near, p_upper_avg, color=red_near, title='Upper Boundary: Nearmost Region')
+fill(p_lower_near, p_lower_avg, color=green_near, title='Lower Boundary: Nearmost Region')
+fill(p_lower_far, p_lower_avg, color=green_far, title='Lower Boundary: Farmost Region')
+
+// Buy and Sell Conditions for VIP MFX Ultimate Scalper
+buyCondition = ta.crossover(close, lower_near)
+sellCondition = ta.crossunder(close, upper_near)
+
+// Confirmation Condition (fixed to return boolean)
+confirmationCondition = confirmToggle ? (close > confirmationValue) : true
+
+// Filter false signals by ensuring signals are near the zones
+validBuyCondition = buyCondition and (close < lower_near * 1.05) and confirmationCondition
+validSellCondition = sellCondition and (close > upper_near * 0.95) and confirmationCondition
+
+// Plotting Buy and Sell Signals with Confirmation for VIP MFX Ultimate Scalper
+plotshape(series=validBuyCondition, location=location.belowbar, color=color.rgb(68, 74, 241), style=shape.triangleup, text="BUY", textcolor=color.rgb(77, 71, 254))
+plotshape(series=validSellCondition, location=location.abovebar, color=color.rgb(239, 242, 255), style=shape.triangledown, text="SELL", textcolor=color.rgb(208, 227, 255))
+
+ ///////////////////////////////
+
+// Setting
+showsignals = input(title='Show Buy & Sell', defval=false, group='Reversal Trade [MFSX V8]')
+sensitivity = input.int(title='Sensitivity (1-15)', defval=7, minval=1, maxval=15, group='Reversal Trade [MFSX V8]') + 1
+
+levels      = input.bool(true, "Take Profit/ Stop-Loss Areas", group="RISK MANAGEMENT SETTINGS [MFSX V8]", inline="MMDB2")
+lvlLines    = true
+linesStyle  = "SOLID"
+lvlDistance = input.int(20, "Distance", 1, inline="levels2", group="RISK MANAGEMENT SETTINGS [MFSX V8]")
+lvlDecimals = input.int(2, "   Decimals", 1, 8, inline="levels2", group="RISK MANAGEMENT SETTINGS [MFSX V8]")
+atrRisk     = input.int(1, "Risk % ", 1, group="RISK MANAGEMENT SETTINGS [MFSX V8]", inline="levels3")
+atrLen      = input.int(14, "  ATR Length", 1, group="RISK MANAGEMENT SETTINGS [MFSX V8]", inline="levels3")
+
+ShowSmartTrail = input(false, 'Smart Trail', group='TOOLS [MFSX V8]')
+show_rev = input.bool(false, "Reversal Cloud", group='TOOLS [MFSX V8]')
+TrendFollower = input(false, 'Trend Follower', group='TOOLS [MFSX V8]')
+
+Periods = sensitivity * 10
+src = hl2
+Multiplier = sensitivity / 2
+changeATR = true
+highlighting = false
+atr2 = ta.sma(ta.tr, Periods)
+atr = changeATR ? ta.atr(Periods) : atr2
+up = src - Multiplier * atr
+up1 = nz(up[1], up)
+up := close[1] > up1 ? math.max(up, up1) : up
+dn = src + Multiplier * atr
+dn1 = nz(dn[1], dn)
+dn := close[1] < dn1 ? math.min(dn, dn1) : dn
+trend = 1
+trend := nz(trend[1], trend)
+trend := trend == -1 and close > dn1 ? 1 : trend == 1 and close < up1 ? -1 : trend
+buySignal = trend == 1 and trend[1] == -1
+plotshape(buySignal and showsignals ? up : na, title='Buy', text='Buy Signal▲', location=location.absolute, style=shape.labelup, size=size.normal, color=#0b23f7, textcolor=color.new(#0101ec, 0))
+sellSignal = trend == -1 and trend[1] == 1
+plotshape(sellSignal and showsignals ? dn : na, title='Sell', text='Sell Signal▼', location=location.absolute, style=shape.labeldown, size=size.normal, color=#e4e4e4, textcolor=color.new(#0a0000, 0))
+
+alertcondition(buySignal, title='SimpleAlgo Buy', message='SimpleAlgo Buy!')
+alertcondition(sellSignal, title='SimpleAlgo Sell', message='SimpleAlgo Sell!')
+changeCond = trend != trend[1]
+alertcondition(changeCond, title='SimpleAlgo Direction Change', message='SimpleAlgo has changed direction!')
+
+// Smart Trail
+trailType = 'modified'
+ATRPeriod = 13
+ATRFactor = 4
+smoothing = 8
+
+norm_o = request.security(syminfo.tickerid, timeframe.period, open)
+norm_h = request.security(syminfo.tickerid, timeframe.period, high)
+norm_l = request.security(syminfo.tickerid, timeframe.period, low)
+norm_c = request.security(syminfo.tickerid, timeframe.period, close)
+
+// Wilders ma
+Wild_ma(_src, _malength) =>
+    _wild = 0.0
+    _wild := nz(_wild[1]) + (_src - nz(_wild[1])) / _malength
+    _wild
+
+// TRUE RANGE CALCULATIONS
+HiLo = math.min(norm_h - norm_l, 1.5 * nz(ta.sma(norm_h - norm_l, ATRPeriod)))
+HRef = norm_l <= norm_h[1] ? norm_h - norm_c[1] : norm_h - norm_c[1] - 0.5 * (norm_l - norm_h[1])
+LRef = norm_h >= norm_l[1] ? norm_c[1] - norm_l : norm_c[1] - norm_l - 0.5 * (norm_l[1] - norm_h)
+trueRange = trailType == 'modified' ? math.max(HiLo, HRef, LRef) : math.max(norm_h - norm_l, math.abs(norm_h - norm_c[1]), math.abs(norm_l - norm_c[1]))
+
+// TRADE LOGIC
+loss = ATRFactor * Wild_ma(trueRange, ATRPeriod)
+Up = norm_c - loss
+Dn = norm_c + loss
+TrendUp = Up
+TrendDown = Dn
+Trend = 1
+TrendUp := norm_c[1] > TrendUp[1] ? math.max(Up, TrendUp[1]) : Up
+TrendDown := norm_c[1] < TrendDown[1] ? math.min(Dn, TrendDown[1]) : Dn
+Trend := norm_c > TrendDown[1] ? 1 : norm_c < TrendUp[1] ? -1 : nz(Trend[1], 1)
+trail = Trend == 1 ? TrendUp : TrendDown
+ex = 0.0
+ex := ta.crossover(Trend, 0) ? norm_h : ta.crossunder(Trend, 0) ? norm_l : Trend == 1 ? math.max(ex[1], norm_h) : Trend == -1 ? math.min(ex[1], norm_l) : ex[1]
+
+// FIBONACCI LEVELS
+state = Trend == 1 ? 'long' : 'short'
+fib1Level = 61.8
+fib2Level = 78.6
+fib3Level = 88.6
+f1 = ex + (trail - ex) * fib1Level / 100
+f2 = ex + (trail - ex) * fib2Level / 100
+f3 = ex + (trail - ex) * fib3Level / 100
+l100 = trail + 0
+
+fill(plot(ShowSmartTrail ? (ta.sma(trail, smoothing)) : na, 'Trailingstop', style=plot.style_line, color=Trend == 1 ? color.new(#0526df, 0) : Trend == -1 ? color.new(#e8e8e8, 0) : na),
+     plot(ShowSmartTrail ? (ta.sma(f2, smoothing)) : na, 'Fib 2', style=plot.style_line, display=display.none),
+     color=state == 'long' ? color.new(#0526df, 80) : state == 'short' ? color.new(#e8e8e8, 80) : na)
+
+// Reversal Band
+kama(src, len) =>
+    kama = 0.0
+    sum_1 = math.sum(math.abs(src - src[1]), len)
+    sum_2 = math.sum(math.abs(src - src[1]), len)
+    kama := nz(kama[1]) + math.pow((sum_1 != 0 ? math.abs(src - src[len]) / sum_2 : 0) * (0.288 - 0.0666) + 0.0666, 2) * (src - nz(kama[1]))
+    kama
+
+length = 2
+bd1 = 2
+bd2 = 3
+bd3 = 4
+smoothingband = 12
+rg = kama(ta.tr, length)
+basis = kama(close, length)
+upper1 = basis + rg * bd1
+upper2 = basis + rg * bd2
+upper3 = basis + rg * bd3
+lower1 = basis - rg * bd1
+lower2 = basis - rg * bd2
+lower3 = basis - rg * bd3
+upper1ema = ta.ema(upper1, smoothingband)
+upper2ema = ta.ema(upper2, smoothingband)
+upper3ema = ta.ema(upper3, smoothingband)
+lower1ema = ta.ema(lower1, smoothingband)
+lower2ema = ta.ema(lower2, smoothingband)
+lower3ema = ta.ema(lower3, smoothingband)
+
+p1 = plot(show_rev ? upper1ema : na, color=color.new(color.white, 100))
+p2 = plot(show_rev ? upper2ema : na, color=color.new(color.white, 100))
+p3 = plot(show_rev ? upper3ema : na, color=color.new(color.white, 100))
+p4 = plot(show_rev ? lower1ema : na, color=color.new(color.white, 100))
+p5 = plot(show_rev ? lower2ema : na, color=color.new(color.white, 100))
+p6 = plot(show_rev ? lower3ema : na, color=color.new(color.white, 100))
+
+// Stop Loss and take profit
+decimals = lvlDecimals == 1 ? "#.#" : lvlDecimals == 2 ? "#.##" : lvlDecimals == 3 ? "#.###" : lvlDecimals == 4 ? "#.####" : lvlDecimals == 5 ? "#.#####" : lvlDecimals == 6 ? "#.######" : lvlDecimals == 7 ? "#.#######" : "#.########"
+
+bull = buySignal
+bear = sellSignal
+trigger2 = bull ? 1 : 0
+countBull = ta.barssince(bull)
+countBear = ta.barssince(bear)
+trigger = nz(countBull, bar_index) < nz(countBear, bar_index) ? 1 : 0
+atrBand = ta.atr(atrLen) * atrRisk
+atrStop = trigger == 1 ? low - atrBand : high + atrBand
+currentposition = countBull > countBear ? 'Sell' : 'Buy'
+
+lastTrade(close) => ta.valuewhen(bull or bear, close, 0)
+
+entry = levels ? label.new(time, close, "Entry Price: " + str.tostring(lastTrade(close), decimals), xloc.bar_time, yloc.price, #FFFDFF, label.style_label_left, color.rgb(0, 0, 0), size.normal) : na
+label.set_x(entry, label.get_x(entry) + math.round(ta.change(time) * lvlDistance))
+label.set_y(entry, lastTrade(close))
+label.delete(entry[1])
+
+stop_y = lastTrade(atrStop)
+stop = levels ? label.new(time, close, "Stop Loss Price: " + str.tostring(stop_y, decimals), xloc.bar_time, yloc.price, #F44848, label.style_label_left, color.white, size.normal) : na
+label.set_x(stop, label.get_x(stop) + math.round(ta.change(time) * lvlDistance))
+label.set_y(stop, stop_y)
+label.delete(stop[1])
+
+tp1Rl_y = (lastTrade(close)-lastTrade(atrStop))*1 + lastTrade(close)
+tp1Rl = levels ? label.new(time, close, "(1-1) Take Profit: " + str.tostring(tp1Rl_y, decimals), xloc.bar_time, yloc.price, #3F5EF4, label.style_label_left, color.white, size.normal) : na
+label.set_x(tp1Rl, label.get_x(tp1Rl) + math.round(ta.change(time) * lvlDistance))
+label.set_y(tp1Rl, tp1Rl_y)
+label.delete(tp1Rl[1])
+
+tp2RL_y = (lastTrade(close)-lastTrade(atrStop))*2 + lastTrade(close)
+tp2RL = levels ? label.new(time, close, "(2-1) Take Profit: " + str.tostring(tp2RL_y, decimals), xloc.bar_time, yloc.price, #4253EB, label.style_label_left, color.white, size.normal) : na
+label.set_x(tp2RL, label.get_x(tp2RL) + math.round(ta.change(time) * lvlDistance))
+label.set_y(tp2RL, tp2RL_y)
+label.delete(tp2RL[1])
+
+tp3RL_y = (lastTrade(close)-lastTrade(atrStop))*3 + lastTrade(close)
+tp3RL = levels ? label.new(time, close, "(3-1) Take Profit: " + str.tostring(tp3RL_y, decimals), xloc.bar_time, yloc.price, #4153D3, label.style_label_left, color.white, size.normal) : na
+label.set_x(tp3RL, label.get_x(tp3RL) + math.round(ta.change(time) * lvlDistance))
+label.set_y(tp3RL, tp3RL_y)
+label.delete(tp3RL[1])
+
+style = linesStyle == "SOLID" ? line.style_solid : linesStyle == "DASHED" ? line.style_dashed : line.style_dotted
+lineEntry = levels and lvlLines ? line.new(bar_index - (trigger == 0 ? countBull : countBear), lastTrade(close), bar_index + lvlDistance, lastTrade(close), xloc.bar_index, extend.none, color.rgb(246, 246, 247, 50), style, 2) : na
+line.delete(lineEntry[1])
+lineStop = levels and lvlLines ? line.new(bar_index - (trigger == 0 ? countBull : countBear), stop_y, bar_index + lvlDistance, stop_y, xloc.bar_index, extend.none, #F44848, style, 2) : na
+line.delete(lineStop[1])
+lineTp1Rl = levels and lvlLines ? line.new(bar_index - (trigger == 0 ? countBull : countBear), tp1Rl_y, bar_index + lvlDistance, tp1Rl_y, xloc.bar_index, extend.none, #3F5EF4, style, 2) : na
+line.delete(lineTp1Rl[1])
+lineTp2RL = levels and lvlLines ? line.new(bar_index - (trigger == 0 ? countBull : countBear), tp2RL_y, bar_index + lvlDistance, tp2RL_y, xloc.bar_index, extend.none, #4253EB, style, 2) : na
+line.delete(lineTp2RL[1])
+lineTp3RL = levels and lvlLines ? line.new(bar_index - (trigger == 0 ? countBull : countBear), tp3RL_y, bar_index + lvlDistance, tp3RL_y, xloc.bar_index, extend.none, #4153D3, style, 2) : na
+line.delete(lineTp3RL[1])
+
+// Trend Follower
+smoothrng(x, t, m) =>
+    wper = t * 2 - 1
+    avrng = ta.ema(math.abs(x - x[1]), t)
+    ta.ema(avrng, wper) * m
+
+smrng = smoothrng(close, 22, 6)
+
+rngfilt(x, r) =>
+    rngfilt = x
+    rngfilt := x > nz(rngfilt[1]) ? x - r < nz(rngfilt[1]) ? nz(rngfilt[1]) : x - r : x + r > nz(rngfilt[1]) ? nz(rngfilt[1]) : x + r
+    rngfilt
+
+filt = rngfilt(close, smrng)
+
+upward = 0.0
+upward := filt > filt[1] ? nz(upward[1]) + 1 : filt < filt[1] ? 0 : nz(upward[1])
+downward = 0.0
+downward := filt < filt[1] ? nz(downward[1]) + 1 : filt > filt[1] ? 0 : nz(downward[1])
+
+filtcolor = upward > 0 ? color.new(#4153D3, 50) : downward > 0 ? color.new(#fdfdfd, 50) : color.new(#56328f, 0)
+plot(TrendFollower ? filt : na, color=filtcolor, linewidth=1, title='Trend Tracer')

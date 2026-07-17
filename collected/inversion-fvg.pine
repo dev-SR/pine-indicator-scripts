@@ -1,0 +1,333 @@
+//@version=5
+indicator("Inversion Fair Value Gap (IFVG)", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+ifvgEnabled = input.bool(true, "Enable IFVG", group="Inversion Fair Value Gaps")
+fvgSensitivity = input.int(2, "FVG Sensitivity (0-25)", minval=0, maxval=25, tooltip="Sensitivity for detecting original FVGs that can become IFVGs", group="Inversion Fair Value Gaps")
+fvgDetection = input.string("All", "FVG Detection Type", options=["All", "Same", "Mixed"], group="Inversion Fair Value Gaps")
+ifvgInvalidation = input.string("Close", "Invalidation Method", options=["Wick", "Close"], tooltip="Close: candle must close through IFVG. Wick: wick must touch through IFVG", group="Inversion Fair Value Gaps")
+showMidline = input.bool(true, "Show Midline", group="Inversion Fair Value Gaps")
+showVolumetric = input.bool(true, "Show Volumetric Info", group="Inversion Fair Value Gaps")
+showHistoric = input.bool(false, "Show Historic Zones", group="Inversion Fair Value Gaps")
+maxZones = input.int(10, "Visible Extended Zones", minval=1, maxval=50, group="Inversion Fair Value Gaps")
+
+// Colors
+bullishColor = input.color(color.new(color.blue, 85), "Bullish IFVG", group="Colors")
+bearishColor = input.color(color.new(color.orange, 85), "Bearish IFVG", group="Colors")
+bullishBorder = input.color(color.new(color.blue, 40), "Bullish Border", group="Colors")
+bearishBorder = input.color(color.new(color.orange, 40), "Bearish Border", group="Colors")
+
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
+
+type FVGData
+    float top
+    float bottom
+    int startBar
+    bool isBullish
+    float totalVolume
+    bool isActive
+
+type IFVGZone
+    box zoneBox
+    line midLine
+    label volLabel
+    label typeLabel
+    float top
+    float bottom
+    int startBar
+    bool isBullish
+    float totalVolume
+    bool isValid
+
+var array<FVGData> activeFVGs = array.new<FVGData>()
+var array<IFVGZone> bullishIFVGs = array.new<IFVGZone>()
+var array<IFVGZone> bearishIFVGs = array.new<IFVGZone>()
+
+// ============================================================================
+// FVG DETECTION (for tracking potential IFVGs)
+// ============================================================================
+
+isBullishBar(index) =>
+    close[index] > open[index]
+
+isBearishBar(index) =>
+    close[index] < open[index]
+
+// Bullish FVG: Gap between bar[2].low and bar[0].high
+// Bar[2] is oldest, Bar[1] is middle, Bar[0] is newest
+detectBullishFVG() =>
+    bool detected = false
+    float gapTop = na
+    float gapBottom = na
+    float totalVol = na
+    
+    // Check if there's a gap: current bar's low > 2 bars ago high
+    if low[0] > high[2]
+        gapSize = low[0] - high[2]
+        gapPercent = (gapSize / high[2]) * 100
+        minGap = fvgSensitivity * 0.01
+        
+        if gapPercent >= minGap
+            validDetection = false
+            
+            if fvgDetection == "All"
+                validDetection := true
+            else if fvgDetection == "Same"
+                validDetection := isBullishBar(0) and isBullishBar(1) and isBullishBar(2)
+            else if fvgDetection == "Mixed"
+                validDetection := not (isBullishBar(0) and isBullishBar(1) and isBullishBar(2))
+            
+            if validDetection
+                detected := true
+                gapTop := low[0]
+                gapBottom := high[2]
+                totalVol := volume[0] + volume[1] + volume[2]
+    
+    [detected, gapTop, gapBottom, totalVol]
+
+// Bearish FVG: Gap between bar[2].high and bar[0].low
+detectBearishFVG() =>
+    bool detected = false
+    float gapTop = na
+    float gapBottom = na
+    float totalVol = na
+    
+    // Check if there's a gap: current bar's high < 2 bars ago low
+    if high[0] < low[2]
+        gapSize = low[2] - high[0]
+        gapPercent = (gapSize / low[2]) * 100
+        minGap = fvgSensitivity * 0.01
+        
+        if gapPercent >= minGap
+            validDetection = false
+            
+            if fvgDetection == "All"
+                validDetection := true
+            else if fvgDetection == "Same"
+                validDetection := isBearishBar(0) and isBearishBar(1) and isBearishBar(2)
+            else if fvgDetection == "Mixed"
+                validDetection := not (isBearishBar(0) and isBearishBar(1) and isBearishBar(2))
+            
+            if validDetection
+                detected := true
+                gapTop := low[2]
+                gapBottom := high[0]
+                totalVol := volume[0] + volume[1] + volume[2]
+    
+    [detected, gapTop, gapBottom, totalVol]
+
+// ============================================================================
+// IFVG LOGIC - An IFVG is a FVG that has been invalidated
+// ============================================================================
+
+// Check if FVG has been invalidated (becomes an IFVG)
+checkFVGInvalidation(fvgData) =>
+    invalidated = false
+    
+    if fvgData.isBullish
+        // Bullish FVG is invalidated when price goes below the gap
+        if ifvgInvalidation == "Close"
+            invalidated := close < fvgData.bottom
+        else  // Wick
+            invalidated := low < fvgData.bottom
+    else
+        // Bearish FVG is invalidated when price goes above the gap
+        if ifvgInvalidation == "Close"
+            invalidated := close > fvgData.top
+        else  // Wick
+            invalidated := high > fvgData.top
+    
+    invalidated
+
+// Check if IFVG itself is invalidated
+// IFVG invalidates in OPPOSITE direction - signaling reversal failed
+checkIFVGInvalidation(ifvg) =>
+    isInvalid = false
+    
+    if ifvg.isBullish
+        // Bullish IFVG (was bullish FVG that got broken) invalidates when price goes ABOVE it
+        // This means the reversal signal failed
+        if ifvgInvalidation == "Close"
+            isInvalid := close > ifvg.top
+        else  // Wick
+            isInvalid := high > ifvg.top
+    else
+        // Bearish IFVG (was bearish FVG that got broken) invalidates when price goes BELOW it
+        if ifvgInvalidation == "Close"
+            isInvalid := close < ifvg.bottom
+        else  // Wick
+            isInvalid := low < ifvg.bottom
+    
+    isInvalid
+
+// Create IFVG Zone from invalidated FVG
+createIFVGZone(top, bottom, isBullish, totalVolume, startBar) =>
+    ifvg = IFVGZone.new()
+    ifvg.top := top
+    ifvg.bottom := bottom
+    ifvg.startBar := startBar  // Use original FVG start bar
+    ifvg.isBullish := isBullish
+    ifvg.totalVolume := totalVolume
+    ifvg.isValid := true
+    
+    // Create box
+    boxColor = isBullish ? bullishColor : bearishColor
+    borderColor = isBullish ? bullishBorder : bearishBorder
+    ifvg.zoneBox := box.new(ifvg.startBar, top, bar_index + 10, bottom, 
+         border_color=borderColor, bgcolor=boxColor, 
+         border_width=2, extend=extend.none)
+    
+    // Create midline
+    if showMidline
+        midPrice = (top + bottom) / 2
+        ifvg.midLine := line.new(ifvg.startBar, midPrice, bar_index + 10, midPrice,
+             color=borderColor, width=1, style=line.style_dashed)
+    
+    // Create type label
+    labelY = isBullish ? top : bottom
+    labelStyle = isBullish ? label.style_label_down : label.style_label_up
+    ifvg.typeLabel := label.new(ifvg.startBar, labelY, 
+         text="IFVG", style=labelStyle,
+         color=borderColor, textcolor=color.white, size=size.small)
+    
+    // Create volume label
+    if showVolumetric
+        midPrice = (top + bottom) / 2
+        ifvg.volLabel := label.new(ifvg.startBar, midPrice, 
+             text="Vol: " + str.tostring(totalVolume, format.volume),
+             style=label.style_none, textcolor=borderColor, size=size.tiny)
+    
+    ifvg
+
+// Update zone extension
+updateIFVGZone(ifvg) =>
+    if not na(ifvg.zoneBox)
+        box.set_right(ifvg.zoneBox, bar_index + 10)
+    
+    if showMidline and not na(ifvg.midLine)
+        line.set_x2(ifvg.midLine, bar_index + 10)
+
+// Delete zone
+deleteIFVGZone(ifvg) =>
+    if not na(ifvg.zoneBox)
+        box.delete(ifvg.zoneBox)
+    if not na(ifvg.midLine)
+        line.delete(ifvg.midLine)
+    if not na(ifvg.volLabel)
+        label.delete(ifvg.volLabel)
+    if not na(ifvg.typeLabel)
+        label.delete(ifvg.typeLabel)
+
+// ============================================================================
+// MAIN LOGIC
+// ============================================================================
+
+var bool newBullishIFVG = false
+var bool newBearishIFVG = false
+
+if ifvgEnabled and barstate.isconfirmed
+    newBullishIFVG := false
+    newBearishIFVG := false
+    
+    // Detect new FVGs and add to tracking array
+    [bullDetected, bullTop, bullBottom, bullVol] = detectBullishFVG()
+    [bearDetected, bearTop, bearBottom, bearVol] = detectBearishFVG()
+    
+    if bullDetected
+        fvgData = FVGData.new()
+        fvgData.top := bullTop
+        fvgData.bottom := bullBottom
+        fvgData.startBar := bar_index - 2  // FVG starts 2 bars ago
+        fvgData.isBullish := true
+        fvgData.totalVolume := bullVol
+        fvgData.isActive := true
+        array.push(activeFVGs, fvgData)
+    
+    if bearDetected
+        fvgData = FVGData.new()
+        fvgData.top := bearTop
+        fvgData.bottom := bearBottom
+        fvgData.startBar := bar_index - 2
+        fvgData.isBullish := false
+        fvgData.totalVolume := bearVol
+        fvgData.isActive := true
+        array.push(activeFVGs, fvgData)
+    
+    // Check active FVGs for invalidation (which creates IFVGs)
+    if array.size(activeFVGs) > 0
+        for i = array.size(activeFVGs) - 1 to 0
+            fvgData = array.get(activeFVGs, i)
+            
+            if fvgData.isActive
+                // Check if this FVG has been invalidated
+                if checkFVGInvalidation(fvgData)
+                    fvgData.isActive := false
+                    
+                    // Create IFVG with same direction as original FVG
+                    newIFVG = createIFVGZone(fvgData.top, fvgData.bottom, fvgData.isBullish,                                             fvgData.totalVolume, fvgData.startBar)
+                    
+                    if fvgData.isBullish
+                        array.push(bullishIFVGs, newIFVG)
+                        newBullishIFVG := true
+                    else
+                        array.push(bearishIFVGs, newIFVG)
+                        newBearishIFVG := true
+                    
+                    // Remove from active tracking
+                    array.remove(activeFVGs, i)
+                else if bar_index - fvgData.startBar > 200
+                    // Remove very old FVGs that haven't invalidated
+                    array.remove(activeFVGs, i)
+    
+    // Update and check existing bullish IFVGs
+    validCount = 0
+    if array.size(bullishIFVGs) > 0
+        for i = array.size(bullishIFVGs) - 1 to 0
+            ifvg = array.get(bullishIFVGs, i)
+            
+            if ifvg.isValid
+                if checkIFVGInvalidation(ifvg)
+                    ifvg.isValid := false
+                    if not showHistoric
+                        deleteIFVGZone(ifvg)
+                        array.remove(bullishIFVGs, i)
+                else
+                    validCount += 1
+                    if validCount <= maxZones
+                        updateIFVGZone(ifvg)
+                    else
+                        if not showHistoric
+                            deleteIFVGZone(ifvg)
+                            array.remove(bullishIFVGs, i)
+    
+    // Update and check existing bearish IFVGs
+    validCount := 0
+    if array.size(bearishIFVGs) > 0
+        for i = array.size(bearishIFVGs) - 1 to 0
+            ifvg = array.get(bearishIFVGs, i)
+            
+            if ifvg.isValid
+                if checkIFVGInvalidation(ifvg)
+                    ifvg.isValid := false
+                    if not showHistoric
+                        deleteIFVGZone(ifvg)
+                        array.remove(bearishIFVGs, i)
+                else
+                    validCount += 1
+                    if validCount <= maxZones
+                        updateIFVGZone(ifvg)
+                    else
+                        if not showHistoric
+                            deleteIFVGZone(ifvg)
+                            array.remove(bearishIFVGs, i)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(newBullishIFVG, "Bullish IFVG Detected", "Bullish FVG has been invalidated - IFVG formed")
+alertcondition(newBearishIFVG, "Bearish IFVG Detected", "Bearish FVG has been invalidated - IFVG formed")

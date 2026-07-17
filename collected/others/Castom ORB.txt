@@ -1,0 +1,1234 @@
+//@version=5
+indicator('CASTOM ORB v1', overlay=true)
+ 
+
+//var bool showtagstrategy = true
+
+bool UseSyncTframe = input.bool(true,"Sync TimeFrame",inline = "002")
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//Main Algo Settings
+GreenFluroscent = color.rgb(0, 255, 0)
+RedFluroscent = color.rgb(255, 0, 0)
+bullcolor = GreenFluroscent
+bearcolor = RedFluroscent
+bullcolorlight = GreenFluroscent
+bearcolorlight = RedFluroscent
+
+Show_Signals   = input.bool(true, title="Show Signal", tooltip="Show Long & Short Signals" , group = "Signal's Settings")
+
+utadxgr = "Signal's Settings"
+
+useRes = input(defval=true, title='Use Alternate Resolution?', group = utadxgr)
+intRes = input(defval=6, title='Multiplier for Alernate Resolution', group = utadxgr)
+stratRes = timeframe.ismonthly ? str.tostring(timeframe.multiplier * intRes, '###M') : timeframe.isweekly ? str.tostring(timeframe.multiplier * intRes, '###W') : timeframe.isdaily ? str.tostring(timeframe.multiplier * intRes, '###D') : timeframe.isintraday ? str.tostring(timeframe.multiplier * intRes, '####') : '60'
+basisType = input.string('ALMA', 'MA Type: ', options=['TEMA', 'HullMA', 'ALMA'], group = utadxgr)
+basisLen = input.int(defval=2, title='MA Period', minval=1, group = utadxgr)
+offsetSigma = input.int(defval=5, title='Sigma for ALMA', minval=0, group = utadxgr)
+offsetALMA = input.float(defval=0.85, title='Offset for ALMA', minval=0, step=0.01, group = utadxgr)
+
+//RSI Inputs
+rsi_length = input.int(14, title = "RSI Length", group = utadxgr)
+rsi_strength_index = input.float(50, title = "RSI Overbought And Oversold Index", group = utadxgr)
+
+//ADX Inputs
+len = input.int(14, minval=1, title="DI Length", group = utadxgr)
+lensig = input.int(14, title="ADX Smoothing", minval=1, maxval=50, group = utadxgr)
+adxtrend = input.int(10, title = "ADX Trend Length", group = utadxgr) 
+
+//Npham Vpa Filter
+usevpa = input.bool(false, "Use npham VPA Filter", group = utadxgr)
+
+alertgr = "Alert Setting"
+alerton2 = input.bool(true, title = "Alert All", group = alertgr)
+//alerton2 = input.bool(true, title = "Take-Profit Or Stop-Loss Alert", group = alertgr)
+
+//var int length = input(title='ATR Period', defval=1 , group = "Signal's Settings")
+//var float mult = input.float(title='TBSensitivity', step=0.1, defval=15 , group = "Signal's Settings") //default 10
+//var float SFilter = input.float(title='Signal Filter', step=0.1, defval=1.0 , group = "Signal's Settings")
+
+//////////////////////////////////////////////////////////////////////////////////////////
+
+// t_type = input.string("Scalping","Strategy",options = ["Default","Scalping","Intraday","Swing"] , group = "Signal's Settings")
+
+// if t_type == "Default"
+    
+//     length := length
+//     mult := mult
+//     SFilter := SFilter
+
+// if t_type == "Scalping"
+//     length := 10
+//     mult := 10
+//     SFilter := 0.5
+
+// if t_type == "Intraday"
+//     length := 2
+//     mult := 15
+//     SFilter := 0.5
+
+// if t_type == "Swing"
+//     length := 10
+//     mult := 5
+//     SFilter := 1.2
+
+
+//colorSup   = input(#00DBFF, "Support Color", group="SR")
+//colorRes   = input(#E91E63, "Resistance Color", group="SR")
+
+
+//algo
+
+// supertrend(sym, tframe, length, mult, SFilter) =>
+
+//     [pclose, p_hl2, patr] = request.security(sym, tframe, [close, hl2, ta.atr(length)])
+
+//     atr = mult * patr
+//     longStop = p_hl2 - atr * SFilter
+//     longStopPrev = nz(longStop[1], longStop)
+//     longStop := pclose[1] > longStopPrev ? math.max(longStop, longStopPrev) : longStop
+
+//     shortStop = p_hl2 + atr * SFilter
+//     shortStopPrev = nz(shortStop[1], shortStop)
+//     shortStop := pclose[1] < shortStopPrev ? math.min(shortStop, shortStopPrev) : shortStop
+
+//     dir = 1
+//     dir := nz(dir[1], dir)
+//     dir := dir == -1 and pclose > shortStopPrev ? 1 : dir == 1 and pclose < longStopPrev ? -1 : dir
+
+
+//     final = dir == 1 and dir[1] == -1 ? 1 : dir == -1 and dir[1] == 1 ? 0 : 2
+
+//     final
+
+// Returns MA input selection variant, default to ALMA if blank or typo.
+variant(type, src, len, offSig, offALMA) =>
+    v1 = ta.alma(src, len, offALMA, offSig)  // Arnaud Legoux
+    v2 = ta.ema(src, len)  // Exponential
+    v3 = 2 * v2 - ta.ema(v2, len)  // Double Exponential
+    v4 = 3 * (v2 - ta.ema(v2, len)) + ta.ema(ta.ema(v2, len), len)  // Triple Exponential
+    v5 = ta.wma(src, len)  // Weighted
+    v6 = ta.vwma(src, len)  // Volume Weighted
+    v7 = 0.0
+    sma_1 = ta.sma(src, len)  // Smoothed
+    v7 := na(v7[1]) ? sma_1 : (v7[1] * (len - 1) + src) / len
+    v8 = ta.wma(2 * ta.wma(src, len / 2) - ta.wma(src, len), math.round(math.sqrt(len)))  // Hull
+    v9 = ta.linreg(src, len, offSig)  // Least Squares
+    v10 = ta.sma(src, len)  // Simple
+    v11 = ta.sma(v1, len)  // Triangular (extreme smooth)
+    // SuperSmoother filter
+    // © 2013  John F. Ehlers
+    a1 = math.exp(-1.414 * 3.14159 / len)
+    b1 = 2 * a1 * math.cos(1.414 * 3.14159 / len)
+    c2 = b1
+    c3 = -a1 * a1
+    c1 = 1 - c2 - c3
+    v12 = 0.0
+    v12 := c1 * (src + nz(src[1])) / 2 + c2 * nz(v12[1]) + c3 * nz(v12[2])
+    type == 'EMA' ? v2 : type == 'DEMA' ? v3 : type == 'TEMA' ? v4 : type == 'WMA' ? v5 : type == 'VWMA' ? v6 : type == 'SMMA' ? v7 : type == 'HullMA' ? v8 : type == 'LSMA' ? v9 : type == 'SMA' ? v10 : type == 'TMA' ? v11 : type == 'SSMA' ? v12 : v1
+
+// USING ALMA IS NO REPAINTING
+reso(exp, use, res) =>
+    security_1 = request.security(syminfo.tickerid, res, exp, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    use ? security_1 : exp
+
+
+nphamvpa() =>
+    rwhmins = (high - nz(low[2])) / (ta.atr(2) * math.sqrt(2))
+    rwhmaxs = (high - nz(low[10])) / (ta.atr(10) * math.sqrt(10))
+    rwhs = math.max(rwhmins, rwhmaxs)
+
+    rwlmins = (nz(high[2]) - low) / (ta.atr(2) * math.sqrt(2))
+    rwlmaxs = (nz(high[10]) - low) / (ta.atr(10) * math.sqrt(10))
+    rwls = math.max(rwlmins, rwlmaxs)
+
+    rwhminl = (high - nz(low[8])) / (ta.atr(8) * math.sqrt(8))
+    rwhmaxl = (high - nz(low[40])) / (ta.atr(40) * math.sqrt(40))
+    rwhl = math.max(rwhminl, rwhmaxl)
+
+    rwlminl = (nz(high[8]) - low) / (ta.atr(8) * math.sqrt(8))
+    rwlmaxl = (nz(high[40]) - low) / (ta.atr(40) * math.sqrt(40))
+    rwll = math.max(rwlminl, rwlmaxl)
+
+    //RWILLo  = max(rllmin,rllmax)
+
+    ground = rwhs
+    sky = rwls
+
+    j = rwhl - rwll
+    k = rwhs - rwls
+    j2 = rwhl
+    k2 = rwll
+
+    ja = ta.crossover(j, 1)  // The following section check the diffeent condition of the RWi above and below zero
+    jb = ta.crossunder(j, 1)  // In oder to check which trend is doing what
+    jc = ta.crossover(-1, j)
+    jd = ta.crossover(j, -1)
+    j2a = ta.crossover(j2, 1)
+    j2b = ta.crossunder(j2, 1)
+    k2a = ta.crossover(k2, 1)
+    k2b = ta.crossunder(k2, 1)
+    //Define the Major, Minor and Immediate trend Status
+    upmajoron = j > 1 and ja[1]
+    upmajoroff = j < 1 and jb[1]
+
+    upminoron = j2 > 1 and j2a[1]
+    upminoroff = j2 < 1 and j2b[1]
+    dnmajoron = j < -1 and jc[1]
+    dnmajoroff = j > -1 and jd[1]
+    dnminoron = k2 > 1 and k2a[1]
+    dnminoroff = k2 < 1 and k2b[1]
+    upmid = ground > 1 ? 1 : 0
+    dnimd = sky > 1 ? 1 : 0
+    iff_1 = j < -1 ? -1 : 0
+    upmajor = j > 1 ? 1 : iff_1
+    upminor = j2 > 1 ? 1 : -1
+    dnminor = k2 > 1 ? 1 : -1
+
+    upmajclr = upmajor == 1 ? color.rgb(3, 252, 36) : upmajor == -1 ? #fa5050 : #f4fc79
+    //upmajclr = upmajor == 1 ? color.lime : upmajor == -1? color.red : color.yellow
+    upmidclr = upmid == 1 ? color.lime : upmid == 0 and dnimd == 1 ? color.red : color.yellow
+    upminclr = upminor == 1 ? color.lime : upminor == -1 ? color.red : color.yellow
+
+    // Đếm số lượng màu xanh (lime) và màu đỏ
+    count_lime = (upmajclr == color.lime ? 1 : 0) + (upmidclr == color.lime ? 1 : 0) + (upminclr == color.lime ? 1 : 0)
+    count_red = (upmajclr == color.red ? 1 : 0) + (upmidclr == color.red ? 1 : 0) + (upminclr == color.red ? 1 : 0)
+
+    // Kiểm tra điều kiện và đưa ra kết quả
+    result = count_lime > 1 ? 1 : count_red > 1 ? 2 : 0
+
+    result
+
+    // // Hiển thị kết quả: Mũi tên lên khi có nhiều hơn 1 cột màu đỏ, mũi tên xuống khi có nhiều hơn 1 cột màu xanh
+    // plotshape(result == 2, title="More Red (Down)", location=location.abovebar, color=color.red, style=shape.labeldown, text="↓", size=size.normal)
+    // plotshape(result == 1, title="More Green (Up)", location=location.belowbar, color=color.lime, style=shape.labelup, text="↑", size=size.normal)
+
+    // // Vẽ màu sắc xu hướng
+    // plotshape(true, title='Major Trend', style=shape.square, color=upmajclr, location=location.bottom, size=size.normal)
+    // plotshape(true, title='Mid Trend', style=shape.square, color=upmidclr, location=location.bottom, size=size.small)
+    // plotshape(true, title='Minor Trend', style=shape.square, color=upminclr, location=location.bottom, size=size.tiny)
+
+rsi(price, length) =>
+    NetChgAvg = ta.ema(price - price[1], length)
+    TotChgAvg = ta.ema(math.abs(price - price[1]), length)
+    ChgRatio = TotChgAvg != 0 ? NetChgAvg / TotChgAvg : 0
+
+    RSI = 50 * (ChgRatio + 1)
+
+closeSeries = variant(basisType, close, basisLen, offsetSigma, offsetALMA)
+openSeries = variant(basisType, open, basisLen, offsetSigma, offsetALMA)
+
+signalcal(sym) =>
+
+    [closealt, openalt] = request.security(sym, stratRes, [closeSeries, openSeries], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+    bool buystate = false
+    bool sellstate = false  
+
+    long = ta.crossover(closealt, openalt)
+    short = ta.crossunder(closealt, openalt)
+
+    rsi = rsi(close, rsi_length)
+
+    //ADX Calculations 
+    [diplus, diminus, adx] = ta.dmi(len, lensig)
+    
+    adxsig = adx >= adxtrend
+
+    vpabuy = usevpa ? nphamvpa() == 2 : true
+
+    vpasell = usevpa ? nphamvpa() == 1 : true
+
+    buy = long and rsi <= 100 - rsi_strength_index and vpabuy and adxsig //and not buystate
+
+    sell = short and rsi >= rsi_strength_index and vpasell and adxsig //and not sellstate
+
+    signal = buy ? 1 : sell ? 0 : 2
+
+    signal
+
+multisignal(sym, tframe) => request.security(sym, tframe, signalcal(sym))
+
+signal = multisignal(syminfo.ticker, timeframe.period)
+
+// longStop = hl2 - ta.atr(length) * SFilter
+// longStopPrev = nz(longStop[1], longStop)
+// longStop := close[1] > longStopPrev ? math.max(longStop, longStopPrev) : longStop
+
+// shortStop = hl2 + ta.atr(length) * SFilter
+// shortStopPrev = nz(shortStop[1], shortStop)
+// shortStop := close[1] < shortStopPrev ? math.min(shortStop, shortStopPrev) : shortStop
+
+bull = signal == 1 and Show_Signals
+bear = signal == 0 and Show_Signals
+
+var int direction = 0
+
+
+// Reglas de entrada y salida
+
+
+y1 = low - (ta.atr(30) * 2.5)
+y2 = high + (ta.atr(30) * 2.5)
+
+
+buylabel  = bull ? label.new(bar_index, y1, "Buy", xloc.bar_index, yloc.price, bullcolor, label.style_label_up, color.rgb(255, 255, 255), size.normal) : na
+selllabel = bear ? label.new(bar_index, y2, "Sell", xloc.bar_index, yloc.price,   bearcolor, label.style_label_down, color.rgb(255, 255, 255), size.normal) : na
+
+// plotchar(nphamvpa())
+
+
+
+bool changeCond = na(direction) ? na : bull or bear
+
+
+
+// Module  - Signals - SL - TPS by @comgunner
+//-----------------------------------------
+//*********************************************************
+//*                     Module                            *
+//*              Signals - SL - TPSEND                    *
+//*********************************************************
+// Cálculos
+
+groupEnTpSl = "======= Module - Signals ======="
+// plot(na)
+
+levels_tip = "Habilita etiquetas compra/venta /SL"
+atrLen_tip = "Atr para el Calculo de Stoploss y TakeProfit"
+atrRisk_tip = " ATR Risk Multiplier: Recommended 1.5 or 1.9 / Multiplicador de Riesgo ATR: Recomendado 1.5 o 1.9"
+tpLen_tip = "Distance in percentage between TakeProfits "
+tpSL_tip = "Distance in percentage for SL "
+
+numTP_tip = " Number of Take Profit Levels, min 1 max 10  "
+numTP = input.int(10, "Number of Take Profit Levels ", minval=1, maxval=10,tooltip =numTP_tip ,group=groupEnTpSl)
+
+PercentOrATR_tip="Select the calculation method for TakeProfits" 
+
+var string PercentOrATR = input.string("ATR", "Calculation method for TakeProfit (% or ATR)", options=["ATR", "PERCENTAGE","PREDICTUM"], inline="TPS", group=groupEnTpSl,tooltip=PercentOrATR_tip)
+
+
+atrLen   = input.int(10, "ATR Length TP / SL ", group=groupEnTpSl, tooltip=atrLen_tip)
+atrRisk  = input.float(1.0, "Tỉ Lệ R:R 1:1", group=groupEnTpSl,tooltip=atrRisk_tip )
+tpLen = input.float(1.0, "TP [%] ", step=0.1, group=groupEnTpSl, tooltip=tpLen_tip)
+tpLenpre_tip = "Initial TP for Predictum type calculation / TP inicial para el cálculo del tipo Predictum"
+tpLenpre = input.float(0.5, "TP Initial Predictum [%] ", minval=0.3, step=0.1, group=groupEnTpSl, tooltip=tpLenpre_tip)
+tpSL = input.float(5, "SL [%] ", step=0.1, group=groupEnTpSl, tooltip=tpSL_tip)
+
+lvlLines    = input.bool(true, "Show TP/SL lines ? ", inline="levels2",group=groupEnTpSl)
+linesStyle  = input.string("DASHED", "", ["SOLID", "DASHED", "DOTTED"], inline="levels2",group=groupEnTpSl)
+lvlDistance = input.int(1, "Distance / Distancia", 1, inline="levels2",group=groupEnTpSl)
+stylelvl = linesStyle == "SOLID" ? line.style_solid : linesStyle == "DASHED" ? line.style_dashed : line.style_dotted
+lvlLinesw = input.int(title=' TP/SL Line Thickness', defval=1, minval=1,inline="levels2",group=groupEnTpSl)
+
+
+
+trigger = bull  ? 1 : 0
+atrBand = ta.atr(atrLen) * atrRisk
+atrStop = signal == 1 ? low - atrBand : high + atrBand
+
+
+
+
+
+
+lastTrade(src) => ta.valuewhen(changeCond, src, 0 )
+
+//Nuevo, distancia de TP's
+
+DistanceTp =  close * tpLen / 100 
+Distance_CTp = trigger == 1 ? close - DistanceTp : close + DistanceTp
+
+
+DistanceSL =  close * tpSL / 100 
+Distance_CSL = trigger == 1 ? low - (close * tpSL / 100) : high + (close * tpSL / 100)
+
+DistanceTppre =  close * tpLenpre / 100 
+Distance_CTpre = trigger == 1 ? close - (close * tpLenpre / 100) : close + (close * tpLenpre / 100)
+
+
+
+var float atrSL = na
+
+if PercentOrATR == "ATR"
+    atrStop := atrStop
+    atrSL := atrStop
+else
+    // Lógica para las opciones "PERCENTAGE" y "PREDICTUM"
+    if PercentOrATR == "PERCENTAGE"
+        atrStop := Distance_CTp
+        atrSL := Distance_CSL
+    else if PercentOrATR == "PREDICTUM"
+        atrStop := Distance_CTpre  // Ajusta según tu lógica específica para "PREDICTUM"
+        atrSL := Distance_CSL
+        //numTP := 8
+
+
+
+
+
+
+// Array para almacenar las etiquetas y líneas
+var label[] tpLabels = array.new_label(0)
+var line[] tpLines = array.new_line(0)
+
+//################################################################
+
+MovingTarget_tip = "Strategy to move StopLoss (BE), when it reaches a TP "
+showLabel_tip = "Show SIGNAL GENERATOR label"
+MovingTarget = input.int(1, title="Moving Target (BE) \n", minval=1,group=groupEnTpSl,inline="SignalG",tooltip=MovingTarget_tip)
+showLabel = input(false, title="Hiển Thị Bảng Tín Hiệu Kết Quả",group=groupEnTpSl,inline="SignalG",tooltip=showLabel_tip)
+
+tf = timeframe.period
+miSimbolo = ticker.standard(syminfo.tickerid)
+
+
+
+
+
+//========================================================================
+
+buy_label = 'Castom ORB v1'
+// buy_label := buy_label + '=========KAKUPAKAT=========\n' 
+
+buy_label := buy_label + ' \n' 
+
+buy_label := buy_label + 'Ticket : ' + '' + str.tostring(miSimbolo)+ '\n'
+buy_label := buy_label + 'Khung Thời Gian : ' + '' + str.tostring(tf)+ '\n'
+buy_label := buy_label + ' \n' 
+
+
+pow(base, exponent) =>
+    var float result = 1.0
+    for i = 1 to exponent
+        result := result * base
+    result
+
+var float[] tpValues = array.new_float(0)
+
+tpslshape(signalType, tporsl) =>
+    shapetext = tporsl == 0 ? "SL" : "TP " + str.tostring(tporsl)
+
+    label.new(x=bar_index, y=signalType == 1 ? low : high, text = shapetext, color=tporsl == 0 ? color.red : color.green, textcolor=color.white, style=signalType == 1 ? label.style_label_up : label.style_label_down)
+
+
+
+////////////////////////////////////
+
+createTP(level_info, signal) =>
+    var float tp_y = na
+    //var string tp_y_str = ""
+    var string emoji = na
+    atrBand = ta.atr(atrLen) * atrRisk
+    atrStop = signal == 1 ? low - atrBand : high + atrBand
+
+    if level_info <= numTP
+        for i = 1 to level_info 
+            if PercentOrATR == "PREDICTUM"
+                if i == 1
+                    tp_y := (close - atrStop) * i + close
+                else
+                    //tp_y := (close - atrStop) * i + close
+                    tp_y := tp_y + (tp_y - close) * 0.618
+            else
+                tp_y := (close - atrStop) * i + close
+    else
+        tp_y := na
+
+    tp_y
+
+extractSymbol(fullSymbol) =>
+    parts = str.split(fullSymbol, ":")
+    array.get(parts, 1)
+
+// Function to create and trigger alert
+createAlert(signalType, sym, tf, entry) =>
+    signal = signalType == 1 ? " 🟩LONG " : signalType == 0 ? " 🟥SHORT " : ""
+
+    [sl, tp1, tp2, tp3, tp4, tp5, tp6, tp7, tp8, tp9, tp10] = request.security(sym, tf, [atrStop ,createTP(1, signalType), createTP(2, signalType), createTP(3, signalType), createTP(4, signalType), createTP(5, signalType), createTP(6, signalType), createTP(7, signalType), createTP(8, signalType), createTP(9, signalType), createTP(10, signalType)])
+    symbol = extractSymbol(sym)
+    
+    if signalType != 2 and barstate.isconfirmed
+        alert_message = "Ticket: #" + symbol + " \n" + "Xu Hướng: " + signal + "\n" + "--------------------\n" + "Khung Thời Gian: H4\n" + "Channel: @LVDTrading - LE VAN DO\n" + "--------------------\n" + "⚠️ ENTRY : " + str.tostring(entry, "#.#####") + " \n \n" + "Take-Profit Targets :\n" + "🦈Target 1: " + (na(tp1) ? "Not Set" : str.tostring(tp1, "#.#####")) + "\n" + "🦈Target 2: " + (na(tp2) ? "Not Set" : str.tostring(tp2, "#.#####")) + "\n" + "🦈Target 3: " + (na(tp3) ? "Not Set" : str.tostring(tp3, "#.#####")) + "\n" + "🦈Target 4: " + (na(tp4) ? "Not Set" : str.tostring(tp4, "#.#####")) + "\n" + "🦈Target 5: " + (na(tp5) ? "Not Set" : str.tostring(tp5, "#.#####")) + "\n" + "🦈Target 6: " + (na(tp6) ? "Not Set" : str.tostring(tp6, "#.#####")) + "\n" + "🦈Target 7: " + (na(tp7) ? "Not Set" : str.tostring(tp7, "#.#####")) + "\n" + "🦈Target 8: " + (na(tp8) ? "Not Set" : str.tostring(tp8, "#.#####")) + "\n" + "🦈Target 9: " + (na(tp9) ? "Not Set" : str.tostring(tp9, "#.#####")) + "\n" + "🦈Target 10: " + (na(tp10) ? "Not Set" : str.tostring(tp10, "#.#####")) + "\n \n" + "⛔️STOPLOSS: " + str.tostring(sl, "#.#####") + "\n"
+        alert(alert_message, alert.freq_once_per_bar)
+
+    var float SLBuy = na    
+    var float TPBuy1 = na
+    var float TPBuy2 = na
+    var float TPBuy3 = na
+    var float TPBuy4 = na
+    var float TPBuy5 = na
+    var float TPBuy6 = na
+    var float TPBuy7 = na
+    var float TPBuy8 = na
+    var float TPBuy9 = na
+    var float TPBuy10 = na
+    var float SLSell = na
+    var float TPSell1 = na
+    var float TPSell2 = na
+    var float TPSell3 = na
+    var float TPSell4 = na  
+    var float TPSell5 = na
+    var float TPSell6 = na
+    var float TPSell7 = na
+    var float TPSell8 = na
+    var float TPSell9 = na
+    var float TPSell10 = na
+
+    if signalType == 1
+        SLBuy := sl
+        TPBuy1 := tp1
+        TPBuy2 := tp2
+        TPBuy3 := tp3
+        TPBuy4 := tp4
+        TPBuy5 := tp5
+        TPBuy6 := tp6
+        TPBuy7 := tp7
+        TPBuy8 := tp8
+        TPBuy9 := tp9
+        TPBuy10 := tp10
+
+    if signalType == 0
+        SLSell := sl
+        TPSell1 := tp1
+        TPSell2 := tp2
+        TPSell3 := tp3
+        TPSell4 := tp4
+        TPSell5 := tp5
+        TPSell6 := tp6
+        TPSell7 := tp7
+        TPSell8 := tp8
+        TPSell9 := tp9
+        TPSell10 := tp10
+
+
+    // if ta.crossover(entry, TPBuy1) or ta.crossunder(entry, TPSell1)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 1" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy1 := na
+    //     TPSell1 := na
+
+    // else if ta.crossover(entry, TPBuy2) or ta.crossunder(entry, TPSell2)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 2" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy2 := na
+    //     TPSell2 := na    
+
+    // else if ta.crossover(entry, TPBuy3) or ta.crossunder(entry, TPSell3)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 3" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy3 := na
+    //     TPSell3 := na    
+
+    // else if ta.crossover(entry, TPBuy4) or ta.crossunder(entry, TPSell4)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 4" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy4 := na
+    //     TPSell4 := na
+
+    // else if ta.crossover(entry, TPBuy5) or ta.crossunder(entry, TPSell5)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 5" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy5 := na
+    //     TPSell5 := na
+
+    // else if ta.crossover(entry, TPBuy6) or ta.crossunder(entry, TPSell6)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 6" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy6 := na
+    //     TPSell6 := na
+
+    // else if ta.crossover(entry, TPBuy7) or ta.crossunder(entry, TPSell7)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 7" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy7 := na
+    //     TPSell7 := na    
+
+    // else if ta.crossover(entry, TPBuy8) or ta.crossunder(entry, TPSell8)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 8" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy8 := na
+    //     TPSell8 := na
+
+    // else if ta.crossover(entry, TPBuy9) or ta.crossunder(entry, TPSell9)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 9" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy9 := na
+    //     TPSell9 := na
+
+    // else if ta.crossover(entry, TPBuy10) or ta.crossunder(entry, TPSell10)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Take Profit Target 10" + " (" + str.tostring(entry) + ")" + " ✅", alert.freq_once_per_bar)
+    //     TPBuy10 := na
+    //     TPSell10 := na
+
+    // else if ta.crossover(entry, SLBuy) or ta.crossunder(entry, SLSell)
+    //     alert("105 Trading ™\n" + "#" + symbol + signal  + " Stop-Loss" + " (" + str.tostring(entry) + ")" + " ❌", alert.freq_once_per_bar)
+    //     SLBuy := na
+    //     SLSell := na
+// indicator(title='CUSTOM INDICATOR', shorttitle='CUSTOM INDICATOR', overlay=false)
+
+// Define Colors
+GreenColorCandle = color.green
+RedColorCandle = color.red
+
+GreenColor = color.rgb(0, 128, 0)
+RedColor = color.rgb(222, 23, 56)
+
+
+YellowFluroscent = color.rgb(255, 255, 0)
+NotInterested = color.new(#ffffff, 90)
+
+// Input Options
+OverlayBarColor = input.bool(true, title='Overlay - Master Candle Color')
+OverlayIndicator = input.bool(true, title='Overlay - MA20 and VWAP')
+
+Overlay_Supertrend = input.bool(false, title='Overlay: Supertrend')
+Overlay_HalfTrend = input.bool(false, title='Overlay: HalfTrend')
+Overlay_Ichimoku_Cloud = input.bool(false, title='Overlay: Ichimoku Cloud')
+Overlay_P_SAR = input.bool(false, title='Overlay: Parabolic SAR')
+
+//---
+// Supertrend
+ST_AtrPeriod = input.int(10, 'ATR Length', minval=1, group='Supertrend')
+ST_Factor = input.float(3.0, 'Factor', minval=0.01, step=0.01, group='Supertrend')
+
+[ST_Supertrend, ST_Direction] = ta.supertrend(ST_Factor, ST_AtrPeriod)
+
+ST_Supertrend := barstate.isfirst ? na : ST_Supertrend
+
+//---
+// HalfTrend
+HT_Amplitude = input(title='Amplitude', defval=2, group='HalfTrend')
+HT_ChannelDeviation = input(title='Channel Deviation', defval=2, group='HalfTrend')
+
+var int HT_Trend = 0
+var int HT_NextTrend = 0
+var float HT_MaxLowPrice = nz(low[1], low)
+var float HT_MinHighPrice = nz(high[1], high)
+
+var float HT_Up = 0.0
+var float HT_Down = 0.0
+float HT_AtrHigh = 0.0
+float HT_AtrLow = 0.0
+float HT_ArrowUp = na
+float HT_ArrowDown = na
+
+HT_Atr2 = ta.atr(100) / 2
+HT_Dev = HT_ChannelDeviation * HT_Atr2
+
+HT_HighPrice = high[math.abs(ta.highestbars(HT_Amplitude))]
+HT_LowPrice = low[math.abs(ta.lowestbars(HT_Amplitude))]
+HT_HighMa = ta.sma(high, HT_Amplitude)
+HT_LowMa = ta.sma(low, HT_Amplitude)
+
+if HT_NextTrend == 1
+    HT_MaxLowPrice := math.max(HT_LowPrice, HT_MaxLowPrice)
+    if HT_HighMa < HT_MaxLowPrice and close < nz(low[1], low)
+        HT_Trend := 1
+        HT_NextTrend := 0
+        HT_MinHighPrice := HT_HighPrice
+else
+    HT_MinHighPrice := math.min(HT_HighPrice, HT_MinHighPrice)
+    if HT_LowMa > HT_MinHighPrice and close > nz(high[1], high)
+        HT_Trend := 0
+        HT_NextTrend := 1
+        HT_MaxLowPrice := HT_LowPrice
+
+if HT_Trend == 0
+    if not na(HT_Trend[1]) and HT_Trend[1] != 0
+        HT_Up := na(HT_Down[1]) ? HT_Down : HT_Down[1]
+        HT_ArrowUp := HT_Up - HT_Atr2
+    else
+        HT_Up := na(HT_Up[1]) ? HT_MaxLowPrice : math.max(HT_MaxLowPrice, HT_Up[1])
+    HT_AtrHigh := HT_Up + HT_Dev
+    HT_AtrLow := HT_Up - HT_Dev
+else
+    if not na(HT_Trend[1]) and HT_Trend[1] != 1
+        HT_Down := na(HT_Up[1]) ? HT_Up : HT_Up[1]
+        HT_ArrowDown := HT_Down + HT_Atr2
+    else
+        HT_Down := na(HT_Down[1]) ? HT_MinHighPrice : math.min(HT_MinHighPrice, HT_Down[1])
+    HT_AtrHigh := HT_Down + HT_Dev
+    HT_AtrLow := HT_Down - HT_Dev
+
+HT_Http = HT_Trend == 0 ? HT_Up : HT_Down
+
+//---
+// Ichimoku Cloud
+IC_ConversionPeriods = input.int(5, minval=1, title='Conversion Periods', group='Ichimoku Cloud')
+IC_BasePeriods = input.int(26, minval=1, title='Base Periods', group='Ichimoku Cloud')
+IC_LaggingSpan2Periods = input.int(52, minval=1, title='Lagging Span 2 Periods', group='Ichimoku Cloud')
+IC_Displacement = input.int(26, minval=1, title='Displacement', group='Ichimoku Cloud')
+
+// Function to Calculate Donchian Channel Average
+donchian(len) =>
+    math.avg(ta.lowest(len), ta.highest(len))
+
+// Ichimoku Cloud Calculations
+IC_ConversionLine = donchian(IC_ConversionPeriods)
+IC_Baseline = donchian(IC_BasePeriods)
+
+//---
+// Parabolic SAR
+PS_Start = input(0.02, group='Parabolic SAR')
+PS_Increment = input(0.02, group='Parabolic SAR')
+PS_Maximum = input(0.2, 'Max Value', group='Parabolic SAR')
+PS_Out = ta.sar(PS_Start, PS_Increment, PS_Maximum)
+
+//---
+// Master Candle Logic
+MA20_bull = close > ta.ema(close, 13)
+Supertrend_bull = close > ST_Supertrend
+Halftrend_bull = close > HT_Http
+Ichimoku_Cloud_bull = close > IC_ConversionLine and close > IC_Baseline or IC_ConversionLine > IC_Baseline
+Parabolic_SAR_bull = close > PS_Out
+Master_Candle_bull = (MA20_bull ? 1 : 0) + (Supertrend_bull ? 1 : 0) + (Halftrend_bull ? 1 : 0) + (Ichimoku_Cloud_bull ? 1 : 0) + (Parabolic_SAR_bull ? 1 : 0) >= 3
+
+MA20_bear = close < ta.ema(close, 13)
+Supertrend_bear = close < ST_Supertrend
+Halftrend_bear = close < HT_Http
+Ichimoku_Cloud_bear = close < IC_ConversionLine and close < IC_Baseline or IC_ConversionLine < IC_Baseline
+Parabolic_SAR_bear = close < PS_Out
+Master_Candle_bear = (MA20_bear ? 1 : 0) + (Supertrend_bear ? 1 : 0) + (Halftrend_bear ? 1 : 0) + (Ichimoku_Cloud_bear ? 1 : 0) + (Parabolic_SAR_bear ? 1 : 0) >= 3
+
+// Set color conditions for plotting based on various indicators
+NOC_Master_Candle = Master_Candle_bull ? GreenFluroscent : Master_Candle_bear ? RedFluroscent : NotInterested
+
+plotcandle(OverlayBarColor ? open : na, OverlayBarColor ? high : na, OverlayBarColor ? low : na, OverlayBarColor ? close : na, title='candles', color=NOC_Master_Candle, bordercolor=NOC_Master_Candle, wickcolor=NOC_Master_Candle, force_overlay=true)
+
+// --- INPUTS FOR RSI TABLE --- //
+rsilengthInput = input.int(14, minval=1, title="RSI Length", group="RSI Settings")
+rsisourceInput = input.source(close, "Source", group="RSI Settings")
+maTypeInput = input.string("SMA", title="MA Type", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="MA Settings")
+malengthInput = input.int(14, title="MA Length", group="MA Settings")
+rsiShowTable = input(true, title="RSI Table", group="RSI TABLE")
+rsiTablePosition = input.string(title='Location', defval='top_right', options=['top_left', 'top_right', 'bottom_left', 'bottom_right'], group="RSI TABLE", inline='1')
+rsiTextSize = input.string(title=' Size', defval='small', options=['auto', 'tiny', 'small', 'normal', 'large', 'huge'], group="RSI TABLE", inline='1')
+textColor = input.color(color.rgb(255, 255, 255), title="Text Color", group="RSI TABLE")
+// --- RSI CALCULATIONS FOR TABLE --- //
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+up = ta.rma(math.max(ta.change(rsisourceInput), 0), rsilengthInput)
+down = ta.rma(-math.min(ta.change(rsisourceInput), 0), rsilengthInput)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+rsiMA = ma(rsi, malengthInput, maTypeInput)
+
+// --- RSI TABLE --- //
+rsi5m = request.security(syminfo.tickerid, "5", ta.rsi(rsisourceInput, rsilengthInput))
+rsi15m = request.security(syminfo.tickerid, "15", ta.rsi(rsisourceInput, rsilengthInput))
+rsi1h = request.security(syminfo.tickerid, "60", ta.rsi(rsisourceInput, rsilengthInput))
+rsi4h = request.security(syminfo.tickerid, "240", ta.rsi(rsisourceInput, rsilengthInput))
+rsi1d = request.security(syminfo.tickerid, "1440", ta.rsi(rsisourceInput, rsilengthInput))
+
+rsiMA5m = request.security(syminfo.tickerid, "5", ma(rsi5m, malengthInput, maTypeInput))
+rsiMA15m = request.security(syminfo.tickerid, "15", ma(rsi15m, malengthInput, maTypeInput))
+rsiMA1h = request.security(syminfo.tickerid, "60", ma(rsi1h, malengthInput, maTypeInput))
+rsiMA4h = request.security(syminfo.tickerid, "240", ma(rsi4h, malengthInput, maTypeInput))
+rsiMA1d = request.security(syminfo.tickerid, "1440", ma(rsi1d, malengthInput, maTypeInput))
+
+// Color conditions based on RSI vs RSI MA
+bullColor = color.rgb(0, 255, 8)
+bearColor = color.rgb(255, 0, 0)
+
+// RSI Info Table Setting
+width_c0 = 0
+width_ci = 4
+
+var table rsi_Table = table.new(position=rsiTablePosition, columns=2, rows=5, bgcolor=color.rgb(18, 22, 33, 50), frame_color=color.black, frame_width=1, border_color=color.black, border_width=1)
+if rsiShowTable
+    table.cell(table_id=rsi_Table, column=0, row=0, text=" RSI 5m:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=1, text=" RSI 15m:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=2, text=" RSI 1h:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=3, text=" RSI 4h:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+    table.cell(table_id=rsi_Table, column=0, row=4, text=" RSI 1d:", width=width_c0, text_color=textColor, text_size=rsiTextSize, text_halign='right')
+
+    table.cell(table_id=rsi_Table, column=1, row=0, text=str.format("{0,number,#.##}", rsi5m), width=width_ci, text_color=textColor, bgcolor=(rsi5m > rsiMA5m ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=1, text=str.format("{0,number,#.##}", rsi15m), width=width_ci, text_color=textColor, bgcolor=(rsi15m > rsiMA15m ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=2, text=str.format("{0,number,#.##}", rsi1h), width=width_ci, text_color=textColor, bgcolor=(rsi1h > rsiMA1h ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=3, text=str.format("{0,number,#.##}", rsi4h), width=width_ci, text_color=textColor, bgcolor=(rsi4h > rsiMA4h ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+    table.cell(table_id=rsi_Table, column=1, row=4, text=str.format("{0,number,#.##}", rsi1d), width=width_ci, text_color=textColor, bgcolor=(rsi1d > rsiMA1d ? bullColor : bearColor), text_size=rsiTextSize, text_halign='left')
+
+// Inputs for Stochastic
+odk = input.int(21, title="K", minval=1)
+dP = input.int(7, title="D", minval=1)
+sk = input.int(7, title="Smooth", minval=1)
+
+// Stochastic calculations
+lk = ta.sma(ta.stoch(close, high, low, odk), sk)
+bnd = ta.sma(lk, dP)
+
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Misu
+
+
+//indicator("Auto Fibo Multi Timeframe [Misu]", shorttitle="Auto Fibo Multi TF [Misu]",  overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+import Fontiramisu/fontilab/12 as fontilab
+
+// ] —————— Input Vars —————— [
+timeframe       = input.timeframe(defval = '240', group="Pivot Settings")
+leftBars        = input.int(defval = 2, title = "Left Bars", minval = 1, group="Pivot Settings")
+rightBars       = input.int(defval = 2, title = "Right Bars", minval = 1, group="Pivot Settings")
+
+// Fibo.
+isColorAll      = input.bool(true, "", group="UI Settings", inline="color")
+colorAll        = input.color(color.white, "Color All Lines ----", group="UI Settings", inline="color")
+
+rightOffset     = input.int(20, "Label Offset Right", group="UI Settings", inline="offset")
+
+isfib0000       = input.bool(true, "", group="UI Settings", inline="0")
+nFib0000        = input.float(0, "", step=0.01, group="UI Settings", inline="0")
+colorFib0000    = input.color(color.white, "", group="UI Settings", inline="0")
+
+isfib0206       = input.bool(false, "", group="UI Settings", inline="0")
+nFib0206        = input.float(0.206, "", step=0.01, group="UI Settings", inline="0")
+colorFib0206    = input.color(color.white, "", group="UI Settings", inline="0")
+
+isfib0382       = input.bool(true, "", group="UI Settings", inline="0.382")
+nFib0382        = input.float(0.382, "", step=0.01, group="UI Settings", inline="0.382")
+colorFib0382    = input.color(color.white, "", group="UI Settings", inline="0.382")
+
+isfib0500       = input.bool(false, "", group="UI Settings", inline="0.382")
+nFib0500        = input.float(0.5, "", step=0.01, group="UI Settings", inline="0.382")
+colorFib0500    = input.color(color.white, "", group="UI Settings", inline="0.382")
+
+isfib0618       = input.bool(true, "", group="UI Settings", inline="0.618")
+nFib0618        = input.float(0.618, "", step=0.01, group="UI Settings", inline="0.618")
+colorFib0618    = input.color(color.white, "", group="UI Settings", inline="0.618")
+
+isfib0786       = input.bool(true, "", group="UI Settings", inline="0.618")
+nFib0786        = input.float(0.718, "", step=0.01, group="UI Settings", inline="0.618")
+colorFib0786    = input.color(color.white, "", group="UI Settings", inline="0.618")
+
+isfib1000       = input.bool(true, "", group="UI Settings", inline="1")
+nFib1000        = input.float(1, "", step=0.01, group="UI Settings", inline="1")
+colorFib1000    = input.color(color.white, "", group="UI Settings", inline="1")
+
+isfib1414       = input.bool(false, "", group="UI Settings", inline="1")
+nFib1414        = input.float(1.414, "", step=0.01, group="UI Settings", inline="1")
+colorFib1414    = input.color(color.white, "", group="UI Settings", inline="1")
+
+isfib1618       = input.bool(false, "", group="UI Settings", inline="1.618")
+nFib1618        = input.float(1.618, "", step=0.01, group="UI Settings", inline="1.618")
+colorFib1618    = input.color(color.white, "", group="UI Settings", inline="1.618")
+
+isfib2000       = input.bool(false, "", group="UI Settings", inline="1.618")
+nFib2000        = input.float(2, "", step=0.01, group="UI Settings", inline="1.618")
+colorFib2000    = input.color(color.white, "", group="UI Settings", inline="1.618")
+
+isfib2618       = input.bool(false, "", group="UI Settings", inline="2.618")
+nFib2618        = input.float(2.618, "", step=0.01, group="UI Settings", inline="2.618")
+colorFib2618    = input.color(color.white, "", group="UI Settings", inline="2.618")
+
+// ] —————— Vars —————— [
+var fib0000     = close
+var fib0206     = close
+var fib0382     = close
+var fib0500     = close
+var fib0618     = close
+var fib0786     = close
+var fib1000     = close
+var fib1414     = close
+var fib1618     = close
+var fib2000     = close
+var fib2618     = close
+
+// ] —————— Find Dev Pivots —————— [
+
+getMultiTfPivots()=>
+    float ph    = ta.pivothigh(leftBars, rightBars)
+    float pl    = ta.pivotlow(leftBars, rightBars)
+    phBIndexS   = ph ? time[rightBars] : na
+    plBIndexS   = pl ? time[rightBars] : na
+
+    [ph, phBIndexS, pl, plBIndexS]
+
+// get if there if Pivot High/low and their start/end times
+[ph, phBIndexS, pl, plBIndexS] = request.security(syminfo.tickerid, timeframe, getMultiTfPivots(), lookahead = barmerge.lookahead_off)
+
+// ] —————— Fibs Handles —————— [
+// Get last highs/lows.
+pivothigh           = na(ph[1]) and ph ? ph : na
+pivotlow            = na(pl[1]) and pl ? pl : na
+var isHighLast      = true
+var curPivotP       = 0.    
+var lastPivotP      = 0. 
+var curPivotBi      = 0    
+var lastPivotBi     = 0
+
+// Special case: where high & low detected at the same time.
+if not na(pivothigh) and not na(pivotlow)
+    lastPivotP          := isHighLast ? pl : ph
+    curPivotP           := isHighLast ? ph : pl
+    lastPivotBi         := isHighLast ? plBIndexS : phBIndexS
+    curPivotBi          := isHighLast ? phBIndexS : plBIndexS
+// All cases
+else 
+    isHighLast          := not na(pivothigh) ? true : not na(pivotlow) ? false : isHighLast
+    
+    lastPivotP          := not na(pivothigh) and not isHighLast[1] or not na(pivotlow) and isHighLast[1] ? curPivotP : lastPivotP
+    curPivotP           := not na(pivothigh) ? ph : not na(pivotlow) ? pl : curPivotP
+    
+    lastPivotBi         := not na(pivothigh) and not isHighLast[1] or not na(pivotlow) and isHighLast[1] ? curPivotBi : lastPivotBi
+    curPivotBi          := not na(pivothigh) ? phBIndexS : not na(pivotlow) ? plBIndexS : curPivotBi
+
+// Logic fibo direction.
+fiboDirUp           = isHighLast
+
+// Last Update Barindex.
+var barLastUpdate = 0
+barLastUpdate       := lastPivotBi
+
+// Calculate fibs levels.
+rangeD          = isHighLast ? curPivotP - lastPivotP : lastPivotP - curPivotP
+fib0000         := fiboDirUp ? curPivotP - nFib0000 * rangeD : curPivotP + nFib0000 * rangeD
+fib0206         := fiboDirUp ? curPivotP - nFib0206 * rangeD : curPivotP + nFib0206 * rangeD
+fib0382         := fiboDirUp ? curPivotP - nFib0382 * rangeD : curPivotP + nFib0382 * rangeD
+fib0500         := fiboDirUp ? curPivotP - nFib0500 * rangeD : curPivotP + nFib0500 * rangeD
+fib0618         := fiboDirUp ? curPivotP - nFib0618 * rangeD : curPivotP + nFib0618 * rangeD
+fib0786         := fiboDirUp ? curPivotP - nFib0786 * rangeD : curPivotP + nFib0786 * rangeD
+fib1000         := fiboDirUp ? curPivotP - nFib1000 * rangeD : curPivotP + nFib1000 * rangeD
+fib1414         := fiboDirUp ? curPivotP - nFib1414 * rangeD : curPivotP + nFib1414 * rangeD
+fib1618         := fiboDirUp ? curPivotP - nFib1618 * rangeD : curPivotP + nFib1618 * rangeD
+fib2000         := fiboDirUp ? curPivotP - nFib2000 * rangeD : curPivotP + nFib2000 * rangeD
+fib2618         := fiboDirUp ? curPivotP - nFib2618 * rangeD : curPivotP + nFib2618 * rangeD
+
+// ] —————— Plot —————— [
+var fib0000Line     = line.new(0, low, bar_index, high)
+var fib0000Label    = label.new(bar_index, low, text="Init")
+
+var fib0206Line     = line.new(0, low, bar_index, high)
+var fib0206Label    = label.new(bar_index, low, text="Init")
+
+var fib0382Line     = line.new(0, low, bar_index, high)
+var fib0382Label    = label.new(bar_index, low, text="Init")
+
+var fib0500Line     = line.new(0, low, bar_index, high)
+var fib0500Label    = label.new(bar_index, low, text="Init")
+
+var fib0618Line     = line.new(0, low, bar_index, high)
+var fib0618Label    = label.new(bar_index, low, text="Init")
+
+var fib0786Line     = line.new(0, low, bar_index, high)
+var fib0786Label    = label.new(bar_index, low, text="Init")
+
+var fib1000Line     = line.new(0, low, bar_index, high)
+var fib1000Label    = label.new(bar_index, low, text="Init")
+
+var fib1414Line     = line.new(0, low, bar_index, high)
+var fib1414Label    = label.new(bar_index, low, text="Init")
+
+var fib1618Line     = line.new(0, low, bar_index, high)
+var fib1618Label    = label.new(bar_index, low, text="Init")
+
+var fib2000Line     = line.new(0, low, bar_index, high)
+var fib2000Label    = label.new(bar_index, low, text="Init")
+
+var fib2618Line     = line.new(0, low, bar_index, high)
+var fib2618Label    = label.new(bar_index, low, text="Init")
+
+labelOffset = rightOffset
+
+if isfib0000
+    line.delete(fib0000Line)
+    label.delete(fib0000Label)
+    fib0000Line     := line.new(barLastUpdate, fib0000, time, fib0000, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib0000,  width=1)
+    fib0000Label    := label.new(x=bar_index + labelOffset, y = fib0000, xloc=xloc.bar_index, text=str.tostring(nFib0000), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib0000, textalign=text.align_center)
+
+if isfib0206
+    line.delete(fib0206Line)
+    label.delete(fib0206Label)
+    fib0206Line     := line.new(barLastUpdate, fib0206, time, fib0206, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib0206,  width=1)
+    fib0206Label    := label.new(x=bar_index + labelOffset, y = fib0206, xloc=xloc.bar_index, text=str.tostring(nFib0206), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib0206, textalign=text.align_center)
+
+if isfib0382
+    line.delete(fib0382Line)
+    label.delete(fib0382Label)
+    fib0382Line     := line.new(barLastUpdate, fib0382, time, fib0382, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib0382,  width=1)
+    fib0382Label    := label.new(x=bar_index + labelOffset, y = fib0382, xloc=xloc.bar_index, text=str.tostring(nFib0382), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib0382, textalign=text.align_center)
+
+if isfib0500
+    line.delete(fib0500Line)
+    label.delete(fib0500Label)
+    fib0500Line     := line.new(barLastUpdate, fib0500, time, fib0500, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib0500,  width=1)
+    fib0500Label    := label.new(x=bar_index + labelOffset, y = fib0500, xloc=xloc.bar_index, text=str.tostring(nFib0500), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib0500, textalign=text.align_center)
+
+if isfib0618
+    line.delete(fib0618Line)
+    label.delete(fib0618Label)
+    fib0618Line     := line.new(barLastUpdate, fib0618, time, fib0618, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib0618,  width=1)
+    fib0618Label    := label.new(x=bar_index + labelOffset, y = fib0618, xloc=xloc.bar_index, text=str.tostring(nFib0618), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib0618, textalign=text.align_center)
+
+if isfib0786
+    line.delete(fib0786Line)
+    label.delete(fib0786Label)
+    fib0786Line     := line.new(barLastUpdate, fib0786, time, fib0786, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib0786,  width=1)
+    fib0786Label    := label.new(x=bar_index + labelOffset, y = fib0786, xloc=xloc.bar_index, text=str.tostring(nFib0786), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib0786, textalign=text.align_center)
+
+if isfib1000
+    line.delete(fib1000Line)
+    label.delete(fib1000Label)
+    fib1000Line     := line.new(barLastUpdate, fib1000, time, fib1000, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib1000,  width=1)
+    fib1000Label    := label.new(x=bar_index + labelOffset, y = fib1000, xloc=xloc.bar_index, text=str.tostring(nFib1000), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib1000, textalign=text.align_center)
+
+if isfib1414
+    line.delete(fib1414Line)
+    label.delete(fib1414Label)
+    fib1414Line     := line.new(barLastUpdate, fib1414, time, fib1414, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib1414,  width=1)
+    fib1414Label    := label.new(x=bar_index + labelOffset, y = fib1414, xloc=xloc.bar_index, text=str.tostring(nFib1414), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib1414, textalign=text.align_center)
+
+if isfib1618
+    line.delete(fib1618Line)
+    label.delete(fib1618Label)
+    fib1618Line     := line.new(barLastUpdate, fib1618, time, fib1618, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib1618,  width=1)
+    fib1618Label    := label.new(x=bar_index + labelOffset, y = fib1618, xloc=xloc.bar_index, text=str.tostring(nFib1618), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib1618, textalign=text.align_center)
+
+if isfib2000
+    line.delete(fib2000Line)
+    label.delete(fib2000Label)
+    fib2000Line     := line.new(barLastUpdate, fib2000, time, fib2000, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib2000,  width=1)
+    fib2000Label    := label.new(x=bar_index + labelOffset, y = fib2000, xloc=xloc.bar_index, text=str.tostring(nFib2000), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib2000, textalign=text.align_center)
+
+if isfib2618
+    line.delete(fib2618Line)
+    label.delete(fib2618Label)
+    fib2618Line     := line.new(barLastUpdate, fib2618, time, fib2618, xloc=xloc.bar_time, color=isColorAll ? colorAll : colorFib2618,  width=1)
+    fib2618Label    := label.new(x=bar_index + labelOffset, y = fib2618, xloc=xloc.bar_index, text=str.tostring(nFib2618), style=label.style_none, size=size.small, textcolor=isColorAll ? colorAll : colorFib2618, textalign=text.align_center)
+
+// linefill.new(fib0786Line, fib1000Line, color.blue)
+
+// ]
+
+overlay=true
+
+periods = input(5, 'Relevant Periods to identify OB')  // Required number of subsequent candles in the same direction to identify Order Block
+threshold = input.float(0.0, 'Min. Percent move to identify OB', step=0.1)  // Required minimum % move (from potential OB close to last subsequent candle to identify Order Block)
+usewicks = input(false, 'Use whole range [High/Low] for OB marking?')  // Display High/Low range for each OB instead of Open/Low for Bullish / Open/High for Bearish
+showbull = input(true, 'Show latest Bullish Channel?')  // Show Channel for latest Bullish OB?
+showbear = input(true, 'Show latest Bearish Channel?')  // Show Channel for latest Bearish OB?
+showdocu = input(false, 'Show Label for documentation tooltip?')  // Show Label which shows documentation as tooltip?
+info_pan = input(false, 'Show Latest OB Panel?')  // Show Info Panel with latest OB Stats
+
+ob_period = periods + 1  // Identify location of relevant Order Block candle
+absmove = math.abs(close[ob_period] - close[1]) / close[ob_period] * 100  // Calculate absolute percent move from potential OB to last candle of subsequent candles
+relmove = absmove >= threshold  // Identify "Relevant move" by comparing the absolute move to the threshold
+
+
+
+// Bullish Order Block Identification
+bullishOB = close[ob_period] < open[ob_period]  // Determine potential Bullish OB candle (red candle)
+
+int upcandles = 0
+for i = 1 to periods by 1
+    upcandles += (close[i] > open[i] ? 1 : 0)  // Determine color of subsequent candles (must all be green to identify a valid Bullish OB)
+    upcandles
+
+OB_bull = bullishOB and upcandles == periods and relmove  // Identification logic (red OB candle & subsequent green candles)
+OB_bull_high = OB_bull ? usewicks ? high[ob_period] : open[ob_period] : na  // Determine OB upper limit (Open or High depending on input)
+OB_bull_low = OB_bull ? low[ob_period] : na  // Determine OB lower limit (Low)
+OB_bull_avg = (OB_bull_high + OB_bull_low) / 2  // Determine OB middle line
+
+// Bearish Order Block Identification
+bearishOB = close[ob_period] > open[ob_period]  // Determine potential Bearish OB candle (green candle)
+
+int downcandles = 0
+for i = 1 to periods by 1
+    downcandles += (close[i] < open[i] ? 1 : 0)  // Determine color of subsequent candles (must all be red to identify a valid Bearish OB)
+    downcandles
+
+OB_bear = bearishOB and downcandles == periods and relmove  // Identification logic (green OB candle & subsequent red candles)
+OB_bear_high = OB_bear ? high[ob_period] : na  // Determine OB upper limit (High)
+OB_bear_low = OB_bear ? usewicks ? low[ob_period] : open[ob_period] : na  // Determine OB lower limit (Open or Low depending on input)
+OB_bear_avg = (OB_bear_low + OB_bear_high) / 2  // Determine OB middle line
+
+// Plotting
+
+plotshape(OB_bull, title='Bullish OB', style=shape.triangleup, color=GreenColor, textcolor=GreenColor, size=size.tiny, location=location.belowbar, offset=-ob_period, text='Bullish OB')  // Bullish OB Indicator
+bull1 = plot(OB_bull_high, title='Bullish OB High', style=plot.style_linebr, color=GreenColor, offset=-ob_period, linewidth=3)  // Bullish OB Upper Limit
+bull2 = plot(OB_bull_low, title='Bullish OB Low', style=plot.style_linebr, color=GreenColor, offset=-ob_period, linewidth=3)  // Bullish OB Lower Limit
+fill(bull1, bull2, color=GreenColor, title='Bullish OB fill', transp=0)  // Fill Bullish OB
+plotshape(OB_bull_avg, title='Bullish OB Average', style=shape.cross, color=GreenColor, size=size.normal, location=location.absolute, offset=-ob_period)  // Bullish OB Average
+
+plotshape(OB_bear, title='Bearish OB', style=shape.triangledown, color=RedColor, textcolor=RedColor, size=size.tiny, location=location.abovebar, offset=-ob_period, text='Bearish OB')  // Bearish OB Indicator
+bear1 = plot(OB_bear_low, title='Bearish OB Low', style=plot.style_linebr, color=RedColor, offset=-ob_period, linewidth=3)  // Bearish OB Lower Limit
+bear2 = plot(OB_bear_high, title='Bearish OB High', style=plot.style_linebr, color=RedColor, offset=-ob_period, linewidth=3)  // Bearish OB Upper Limit
+fill(bear1, bear2, color=RedColor, title='Bearish OB fill', transp=0)  // Fill Bearish OB
+plotshape(OB_bear_avg, title='Bearish OB Average', style=shape.cross, color=RedColor, size=size.normal, location=location.absolute, offset=-ob_period)  // Bearish OB Average
+
+var line linebull1 = na  // Bullish OB average 
+var line linebull2 = na  // Bullish OB open
+var line linebull3 = na  // Bullish OB low
+var line linebear1 = na  // Bearish OB average
+var line linebear2 = na  // Bearish OB high
+var line linebear3 = na  // Bearish OB open
+
+if OB_bull and showbull
+    line.delete(linebull1)
+    linebull1 := line.new(x1=bar_index, y1=OB_bull_avg, x2=bar_index - 1, y2=OB_bull_avg, extend=extend.left, color=GreenColor, style=line.style_solid, width=1)
+
+    line.delete(linebull2)
+    linebull2 := line.new(x1=bar_index, y1=OB_bull_high, x2=bar_index - 1, y2=OB_bull_high, extend=extend.left, color=GreenColor, style=line.style_dashed, width=1)
+
+    line.delete(linebull3)
+    linebull3 := line.new(x1=bar_index, y1=OB_bull_low, x2=bar_index - 1, y2=OB_bull_low, extend=extend.left, color=GreenColor, style=line.style_dashed, width=1)
+    linebull3
+
+if OB_bear and showbear
+    line.delete(linebear1)
+    linebear1 := line.new(x1=bar_index, y1=OB_bear_avg, x2=bar_index - 1, y2=OB_bear_avg, extend=extend.left, color=RedColor, style=line.style_solid, width=1)
+
+    line.delete(linebear2)
+    linebear2 := line.new(x1=bar_index, y1=OB_bear_high, x2=bar_index - 1, y2=OB_bear_high, extend=extend.left, color=RedColor, style=line.style_dashed, width=1)
+
+    line.delete(linebear3)
+    linebear3 := line.new(x1=bar_index, y1=OB_bear_low, x2=bar_index - 1, y2=OB_bear_low, extend=extend.left, color=RedColor, style=line.style_dashed, width=1)
+    linebear3
+
+// Alerts for Order Blocks Detection
+
+alertcondition(OB_bull, title='New Bullish OB detected', message='New Bullish OB detected - This is NOT a BUY signal!')
+alertcondition(OB_bear, title='New Bearish OB detected', message='New Bearish OB detected - This is NOT a SELL signal!')
+
+// Print latest Order Blocks in Data Window
+
+var latest_bull_high = 0.0  // Variable to keep latest Bull OB high
+var latest_bull_avg = 0.0   // Variable to keep latest Bull OB average
+var latest_bull_low = 0.0   // Variable to keep latest Bull OB low
+var latest_bear_high = 0.0  // Variable to keep latest Bear OB high
+var latest_bear_avg = 0.0   // Variable to keep latest Bear OB average
+var latest_bear_low = 0.0   // Variable to keep latest Bear OB low
+
+// Assign latest values to variables
+if OB_bull_high > 0
+    latest_bull_high := OB_bull_high
+    latest_bull_high
+
+if OB_bull_avg > 0
+    latest_bull_avg := OB_bull_avg
+    latest_bull_avg
+
+if OB_bull_low > 0
+    latest_bull_low := OB_bull_low
+    latest_bull_low
+
+if OB_bear_high > 0
+    latest_bear_high := OB_bear_high
+    latest_bear_high
+
+if OB_bear_avg > 0
+    latest_bear_avg := OB_bear_avg
+    latest_bear_avg
+
+if OB_bear_low > 0
+    latest_bear_low := OB_bear_low
+    latest_bear_low
+
+// Plot invisible characters to be able to show the values in the Data Window
+plotchar(latest_bull_high, char=' ', location=location.abovebar, color=color.new(#777777, 100), size=size.tiny, title='Latest Bull High')
+plotchar(latest_bull_avg, char=' ', location=location.abovebar, color=color.new(#777777, 100), size=size.tiny, title='Latest Bull Avg')
+plotchar(latest_bull_low, char=' ', location=location.abovebar, color=color.new(#777777, 100), size=size.tiny, title='Latest Bull Low')
+plotchar(latest_bear_high, char=' ', location=location.abovebar, color=color.new(#777777, 100), size=size.tiny, title='Latest Bear High')
+plotchar(latest_bear_avg, char=' ', location=location.abovebar, color=color.new(#777777, 100), size=size.tiny, title='Latest Bear Avg')
+plotchar(latest_bear_low, char=' ', location=location.abovebar, color=color.new(#777777, 100), size=size.tiny, title='Latest Bear Low')
+
+// InfoPanel for latest Order Blocks
+
+draw_InfoPanel(_text, _x, _y, font_size) =>
+    var label la_panel = na
+    label.delete(la_panel)
+    la_panel := label.new(x=_x, y=_y, text=_text, xloc=xloc.bar_time, yloc=yloc.price, color=color.new(#383838, 5), style=label.style_label_left, textcolor=color.white, size=font_size)
+    la_panel
+
+info_panel_x = time_close + math.round(ta.change(time) * 100)
+info_panel_y = close
+
+title = 'LATEST ORDER BLOCKS'
+row0 = '-----------------------------------------------------'
+row1 = ' Bullish - High: ' + str.tostring(latest_bull_high, '#.##')
+row2 = ' Bullish - Avg: ' + str.tostring(latest_bull_avg, '#.##')
+row3 = ' Bullish - Low: ' + str.tostring(latest_bull_low, '#.##')
+row4 = '-----------------------------------------------------'
+row5 = ' Bearish - High: ' + str.tostring(latest_bear_high, '#.##')
+row6 = ' Bearish - Avg: ' + str.tostring(latest_bear_avg, '#.##')
+row7 = ' Bearish - Low: ' + str.tostring(latest_bear_low, '#.##')
+
+panel_text = '\n' + title + '\n' + row0 + '\n' + row1 + '\n' + row2 + '\n' + row3 + '\n' + row4 + '\n\n' + row5 + '\n' + row6 + '\n' + row7 + '\n'
+
+if info_pan
+    draw_InfoPanel(panel_text, info_panel_x, info_panel_y, size.normal)
+
+// === Label for Documentation/Tooltip ===
+chper = time - time[1]
+chper := ta.change(chper) > 0 ? chper[1] : chper
+
+// === Tooltip text ===
+var vartooltip = 'Indicator to help identifying instituational Order Blocks. Often these blocks signal the beginning of a strong move, but there is a high probability, that these prices will be revisited at a later point in time again and therefore are interesting levels to place limit orders. \nBullish Order block is the last down candle before a sequence of up candles. \nBearish Order Block is the last up candle before a sequence of down candles. \nIn the settings the number of required sequential candles can be adjusted. \nFurthermore a %-threshold can be entered which the sequential move needs to achieve in order to validate a relevant Order Block. \nChannels for the last Bullish/Bearish Block can be shown/hidden.'
+
+// === Print Label ===
+var label l_docu = na
+label.delete(l_docu)
+
+if showdocu
+    l_docu := label.new(x=time + chper * 35, y=close, text='DOCU OB', color=color.gray, textcolor=color.white, style=label.style_label_center, xloc=xloc.bar_time, yloc=yloc.price, size=size.tiny, textalign=text.align_left, tooltip=vartooltip)
+    l_docu
+    
+// === Inputs ===
+tablePosition = input.string("bottom_right", title="Table Position", 
+     options=["top_right", "top_left", "bottom_right", "bottom_left"])
+tableSize = input.string(defval = 'small', title = 'Table Size', options = ['tiny', 'small', 'normal', 'large'])
+showStrengthMeter = input(true, title = 'Show Strength Meters')
+tableborderColor = input(color.rgb(252, 252, 252), title = 'Table Border Color')
+tableBgcolor = input(#020645, title = 'Table Background Color')
+tableFrameColor = input(color.rgb(251, 251, 255), title = 'Table Frame Color')
+
+// === OLED Panel Colors ===
+bgColor2 = color.rgb(25, 25, 112, 90) // Deep navy for OLED effect
+
+// === Trend Detection ===
+emaFast = ta.ema(close, 14 / 2)
+emaSlow = ta.ema(close, 14)
+trendUp = emaFast > emaSlow
+trendArrow = trendUp ? '📈' : '📉'
+
+// === Momentum Calculation (RSI-based) ===
+momentum = ta.rsi(close, 14)
+momentumColor = momentum > 50 ? color.blue : color.orange
+
+// === Strength Calculation ===
+longStrength = math.min(100, math.max(0, (momentum - 50) * 2)) // Bullish Strength
+shortStrength = math.min(100, math.max(0, (50 - momentum) * 2)) // Bearish Strength
+
+// === Market Volatility Score (ATR) ===
+atrValue = ta.atr(14)
+volatilityScore = atrValue / close * 10000
+
+// === Volume Analysis ===
+volAvg = ta.sma(volume, 14)
+volChangePct = ((volume - volAvg) / volAvg) * 100
+volStrength = math.min(100, math.max(0, math.abs(volChangePct) * 2))
+volBlocks = int(volStrength / 10)
+volMeterString = volume > volAvg
+     ? 'Volume: ' + str.repeat('🟩', volBlocks) + str.repeat('⬛', 10 - volBlocks) + ' +' + str.tostring(volChangePct, "#") + '%'
+     : 'Volume: ' + str.repeat('🟥', volBlocks) + str.repeat('⬛', 10 - volBlocks) + ' ' + str.tostring(volChangePct, "#") + '%'
+
+// === Trend Strength Calculation ===
+trendStrength = math.abs(emaFast - emaSlow) / close * 1000
+trendStrengthText = 'Trend Strength: ' + str.tostring(trendStrength, '#.##') + '%'
+
+// === Table Setup ===
+var table display = table.new(position = tablePosition, columns = 1, rows = 10,
+     frame_width = 2, frame_color = tableFrameColor, border_color = tableborderColor,
+     border_width = 2, bgcolor = tableBgcolor)
+
+table.cell(display, 0, 0, '🌟 Data Terminal ' + trendArrow, text_color = color.white, bgcolor = bgColor2, text_halign = text.align_center)
+table.cell(display, 0, 1, 'Price: ' + str.tostring(close, '#.##'), text_color = color.white, bgcolor = bgColor2)
+table.cell(display, 0, 2, 'Momentum: ' + str.tostring(momentum, '#.##'), text_color = momentumColor, bgcolor = bgColor2)
+
+if showStrengthMeter
+    longBlocks = int(longStrength / 10)
+    shortBlocks = int(shortStrength / 10)
+    longMeterString = 'Long: ' + str.repeat('🟩', longBlocks) + str.repeat('⬛', 10 - longBlocks) + ' ' + str.tostring(longStrength, '#') + '%'
+    shortMeterString = 'Short: ' + str.repeat('🟥', shortBlocks) + str.repeat('⬛', 10 - volBlocks) + ' ' + str.tostring(shortStrength, '#') + '%'
+
+    table.cell(display, 0, 3, longMeterString, text_size = tableSize, text_color = color.lime, bgcolor = bgColor2)
+    table.cell(display, 0, 4, shortMeterString, text_size = tableSize, text_color = color.red, bgcolor = bgColor2)
+    table.cell(display, 0, 5, trendStrengthText, text_size = tableSize, text_color = color.fuchsia, bgcolor = bgColor2)
+    table.cell(display, 0, 6, "🔥 Volatility: " + str.tostring(volatilityScore, "#.##") + " pts", text_size = tableSize, text_color = #14f357, bgcolor = bgColor2)
+    table.cell(display, 0, 7, volMeterString, text_size = tableSize, text_color = volume > volAvg ? color.lime : color.red, bgcolor = tableBgcolor)

@@ -45,6 +45,10 @@ bool  show_delta   = input.bool(true, "Delta-Colored Bubbles", group = GRP_DELTA
 float delta_thresh = input.float(0.1, "Delta Neutral Zone",   group = GRP_DELTA, step = 0.05, minval = 0, maxval = 0.49,
                                  tooltip = "Close-position offset from midpoint to be considered neutral (grey).")
 
+var GRP_HEAT = "🌡 Volume Heatmap"
+bool show_heatmap = input.bool(false, "Use Heatmap Colors", group = GRP_HEAT,
+                                 tooltip = "Overrides delta colors with a five-stop volume intensity gradient.")
+
 var GRP_ABS = "🔵 Absorption Detection"
 bool  show_absorp     = input.bool(true,  "Detect Absorption",     group = GRP_ABS,
                                  tooltip = "Flags high-volume bars with a tiny body AND balanced wicks — institutions absorbing supply/demand.")
@@ -52,15 +56,16 @@ float absorp_ratio    = input.float(0.2,  "Max Body/Range",        group = GRP_A
                                  tooltip = "Body-to-range ratio threshold. Lower = more doji-like, more selective.")
 float absorp_wick_bal = input.float(0.65, "Max Wick Imbalance",    group = GRP_ABS, step = 0.05, minval = 0.1, maxval = 0.95,
                                  tooltip = "Prevents mislabelling bars with one dominant wick as absorption.\nRatio of longer-to-total-wick. Lower = stricter balance required.\nDefault 0.65: neither wick can be more than 65% of total wick length.")
-color absorp_color    = input.color(color.new(#00bfff, 10), "Color", group = GRP_ABS)
+color bull_abs_col    = input.color(color.new(#00c853, 10), "Bull Absorption", group = GRP_ABS)
+color bear_abs_col    = input.color(color.new(#d50000, 10), "Bear Absorption", group = GRP_ABS)
 
 var GRP_EXH = "⚡ Exhaustion Detection"
 bool  show_exhaust = input.bool(true,  "Detect Exhaustion",  group = GRP_EXH,
                                  tooltip = "Flags high-volume bars where price was strongly rejected — potential reversal signal.\nExhaustion is checked BEFORE absorption and takes priority.")
 float exhaust_wick = input.float(0.60, "Min Wick/Range",     group = GRP_EXH, step = 0.05, minval = 0.3, maxval = 0.95,
                                  tooltip = "Rejection wick must be at least this fraction of the total candle range.")
-color bull_exh_col = input.color(color.new(#ff3333, 15), "Bull Exh (Bearish ↓)", group = GRP_EXH)
-color bear_exh_col = input.color(color.new(#00ff88, 15), "Bear Exh (Bullish ↑)", group = GRP_EXH)
+color bull_exh_col = input.color(color.new(#00c853, 15), "Bull Exhaustion", group = GRP_EXH)
+color bear_exh_col = input.color(color.new(#d50000, 15), "Bear Exhaustion", group = GRP_EXH)
 
 var GRP_CLIMAX = "🔥 Volume Climax"
 bool  show_climax = input.bool(true,  "Detect Climax",         group = GRP_CLIMAX,
@@ -74,15 +79,19 @@ bool  show_levels  = input.bool(false, "Show Level Lines",   group = GRP_LVL)
 bool  extend_lines = input.bool(true,  "Extend Right",       group = GRP_LVL)
 int   levels_qty   = input.int(12,     "Max Lines on Chart", group = GRP_LVL, minval = 1, maxval = 100)
 
+var GRP_LEGEND = "🧭 Color Legend"
+bool show_legend = input.bool(true, "Show Color Legend", group = GRP_LEGEND)
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CORE CALCULATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 bool in_window = (last_bar_index - bar_index) <= last_n_candles
 
-// Normalised volume (z-score against 200-bar rolling StdDev)
+// Normalised volume as standard deviations above/below the 200-bar average.
+float vol_ma   = ta.sma(volume, 200)
 float vol_sd   = ta.stdev(volume, 200)
-float norm_vol = vol_sd > 0 ? volume / vol_sd : 0
+float norm_vol = vol_sd > 0 ? (volume - vol_ma) / vol_sd : 0
 
 // Candle anatomy
 float candle_range = high - low
@@ -96,6 +105,8 @@ float lower_wick_r = candle_range > 0 ? lower_wick / candle_range : 0
 // Close position: 0.0 = at low, 1.0 = at high
 float close_pos  = candle_range > 0 ? (close - low) / candle_range : 0.5
 float delta_bias = close_pos - 0.5  // –0.5 (full bear) → +0.5 (full bull)
+bool bull_type   = delta_bias > delta_thresh or (math.abs(delta_bias) <= delta_thresh and close >= open)
+bool bear_type   = not bull_type
 
 // ── Wick balance (key improvement for absorption) ─────────────────────────────
 // Measures how one-sided the wicks are.
@@ -108,13 +119,13 @@ float wick_imbal  = total_wick > 0 ? math.max(upper_wick, lower_wick) / total_wi
 
 // ── Pattern flags ─────────────────────────────────────────────────────────────
 bool is_high_vol = norm_vol > threshold
-bool is_climax   = norm_vol >= climax_mult
+bool is_climax   = show_climax and norm_vol >= climax_mult
 
 // Exhaustion: checked FIRST — takes priority over absorption.
-// Bull exhaustion = high-vol bar with massive upper wick (buyers rejected at top → bearish signal → red).
-// Bear exhaustion = high-vol bar with massive lower wick (sellers rejected at bottom → bullish signal → green).
-bool is_bull_exhaustion = show_exhaust and is_high_vol and upper_wick_r >= exhaust_wick
-bool is_bear_exhaustion = show_exhaust and is_high_vol and lower_wick_r >= exhaust_wick
+// Bull exhaustion = high-vol bar with dominant lower wick (sellers rejected at bottom → bullish signal → green).
+// Bear exhaustion = high-vol bar with dominant upper wick (buyers rejected at top → bearish signal → red).
+bool is_bull_exhaustion = show_exhaust and is_high_vol and lower_wick_r >= exhaust_wick and lower_wick > upper_wick
+bool is_bear_exhaustion = show_exhaust and is_high_vol and upper_wick_r >= exhaust_wick and upper_wick > lower_wick
 
 // Absorption: only triggers when NEITHER exhaustion condition is present.
 // Requires: tiny body + balanced wicks (not a hammer/star) + high volume.
@@ -124,6 +135,8 @@ bool is_exhaustion = is_bull_exhaustion or is_bear_exhaustion
 bool is_absorption = show_absorp and is_high_vol and not is_exhaustion
                      and body_ratio < absorp_ratio
                      and wick_imbal  < absorp_wick_bal
+bool is_bull_absorption = is_absorption and bull_type
+bool is_bear_absorption = is_absorption and bear_type
 
 // ── Bubble size tiers ─────────────────────────────────────────────────────────
 bool cond_tiny   = show_bubbles and min_size <= 0 and norm_vol > 0              and norm_vol < threshold       and in_window
@@ -142,22 +155,24 @@ color bear_lo  = color.new(#ff8a80, 50)
 color bear_hi  = color.new(#d50000,  5)
 color neut_col = color.new(#9e9e9e, 45)
 
-color delta_col =
-     delta_bias >  delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bull_lo, bull_hi) :
-     delta_bias < -delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bear_lo, bear_hi) :
-                                  neut_col
+color hm_c1 = color.new(#00c8ff, 55)   // aqua
+color hm_c2 = color.new(#00e676, 40)   // green
+color hm_c3 = color.new(#ffea00, 25)   // yellow
+color hm_c4 = color.new(#ff6d00, 15)   // orange
+color hm_c5 = color.new(#d50000,  5)   // red
 
-color base_col = show_delta
-                 ? delta_col
-                 : color.from_gradient(norm_vol, 0, 8, color.new(color.green, 80), color.new(color.green, 5))
+color heatmap_col = norm_vol < 1 ? color.from_gradient(norm_vol, 0, 1, hm_c1, hm_c2) : norm_vol < 3 ? color.from_gradient(norm_vol, 1, 3, hm_c2, hm_c3) : norm_vol < 5 ? color.from_gradient(norm_vol, 3, 5, hm_c3, hm_c4) : color.from_gradient(norm_vol, 5, 9, hm_c4, hm_c5)
 
-// Priority: Exhaustion → Absorption → base delta color
-// (Exhaustion now wins over absorption — previously absorption could silently override)
-color final_col =
-     is_bull_exhaustion ? bull_exh_col  :
-     is_bear_exhaustion ? bear_exh_col  :
-     is_absorption      ? absorp_color  :
-                          base_col
+color delta_col = delta_bias > delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bull_lo, bull_hi) : delta_bias < -delta_thresh ? color.from_gradient(norm_vol, threshold, 8, bear_lo, bear_hi) : neut_col
+
+color base_col = show_heatmap ? heatmap_col : show_delta ? delta_col : color.from_gradient(norm_vol, 0, 8, color.new(color.green, 80), color.new(color.green, 5))
+
+color absorption_col = is_bull_absorption ? bull_abs_col : bear_abs_col
+
+// Priority: Exhaustion → Absorption → Heatmap → Delta → Base gradient
+color final_col = is_bull_exhaustion ? bull_exh_col : is_bear_exhaustion ? bear_exh_col : is_absorption ? absorption_col : base_col
+
+bgcolor(is_climax and climax_bg and in_window ? (bull_type ? color.new(bull_exh_col, 88) : color.new(bear_exh_col, 88)) : na, title = "Climax Background")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  BUBBLE PLOTS
@@ -177,52 +192,68 @@ plotshape(cond_huge   ? src : na, "", shape.circle, location.absolute, final_col
 
 var label[] pattern_labels = array.new<label>()
 var line[]  level_lines    = array.new<line>()
+var table legend_tbl       = table.new(position.top_right, 2, 8, border_width = 1)
 
 if barstate.isconfirmed and in_window
 
-    label new_lbl = na
-
-    if is_absorption
-        new_lbl := label.new(bar_index, high, "A",
+    if is_bull_absorption
+        label bull_abs_lbl = label.new(bar_index, low, "↑A",
                   xloc      = xloc.bar_index,
                   yloc      = yloc.price,
-                  color     = color.new(absorp_color, 30),
-                  style     = label.style_label_down,
-                  textcolor = color.white,
-                  size      = size.small,
-                  tooltip   = "Absorption — High volume, tiny body, balanced wicks.\n" +
-                              "Body/Range: "    + str.tostring(body_ratio,  "#.##") + "\n" +
-                              "Wick imbalance: "+ str.tostring(wick_imbal,  "#.##") + "\n" +
-                              "Vol: "           + str.tostring(volume, format.volume))
-
-    // Bull exhaustion: rejected AT THE TOP → bearish → label points down, red
-    if is_bull_exhaustion
-        new_lbl := label.new(bar_index, high, "↓X",
-                  xloc      = xloc.bar_index,
-                  yloc      = yloc.price,
-                  color     = color.new(bull_exh_col, 20),
-                  style     = label.style_label_down,
-                  textcolor = color.white,
-                  size      = size.small,
-                  tooltip   = "Bull Exhaustion — High volume, strongly rejected at the high (bearish).\n" +
-                              "Upper wick/range: " + str.tostring(upper_wick_r, "#.##") + "\n" +
-                              "Vol: " + str.tostring(volume, format.volume))
-
-    // Bear exhaustion: rejected AT THE BOTTOM → bullish → label points up, green
-    if is_bear_exhaustion and not is_bull_exhaustion
-        new_lbl := label.new(bar_index, low, "↑X",
-                  xloc      = xloc.bar_index,
-                  yloc      = yloc.price,
-                  color     = color.new(bear_exh_col, 20),
+                  color     = color.new(bull_abs_col, 30),
                   style     = label.style_label_up,
                   textcolor = color.white,
                   size      = size.small,
-                  tooltip   = "Bear Exhaustion — High volume, strongly rejected at the low (bullish).\n" +
+                  tooltip   = "Bull Absorption — bullish trading bias from high volume, tiny body, balanced wicks.\n" +
+                              "Body/Range: "    + str.tostring(body_ratio,  "#.##") + "\n" +
+                              "Wick imbalance: "+ str.tostring(wick_imbal,  "#.##") + "\n" +
+                              "Vol: "           + str.tostring(volume, format.volume))
+        array.push(pattern_labels, bull_abs_lbl)
+
+    if is_bear_absorption
+        label bear_abs_lbl = label.new(bar_index, high, "↓A",
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = color.new(bear_abs_col, 30),
+                  style     = label.style_label_down,
+                  textcolor = color.white,
+                  size      = size.small,
+                  tooltip   = "Bear Absorption — bearish trading bias from high volume, tiny body, balanced wicks.\n" +
+                              "Body/Range: "    + str.tostring(body_ratio,  "#.##") + "\n" +
+                              "Wick imbalance: "+ str.tostring(wick_imbal,  "#.##") + "\n" +
+                              "Vol: "           + str.tostring(volume, format.volume))
+        array.push(pattern_labels, bear_abs_lbl)
+
+    // Bull exhaustion: bullish trading bias from rejection at the bottom.
+    if is_bull_exhaustion
+        label bull_exh_lbl = label.new(bar_index, low, "↑X",
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = color.new(bull_exh_col, 20),
+                  style     = label.style_label_up,
+                  textcolor = color.white,
+                  size      = size.small,
+                  tooltip   = "Bull Exhaustion — bullish trading bias from high volume rejection at the low.\n" +
                               "Lower wick/range: " + str.tostring(lower_wick_r, "#.##") + "\n" +
                               "Vol: " + str.tostring(volume, format.volume))
+        array.push(pattern_labels, bull_exh_lbl)
+
+    // Bear exhaustion: bearish trading bias from rejection at the top.
+    if is_bear_exhaustion
+        label bear_exh_lbl = label.new(bar_index, high, "↓X",
+                  xloc      = xloc.bar_index,
+                  yloc      = yloc.price,
+                  color     = color.new(bear_exh_col, 20),
+                  style     = label.style_label_down,
+                  textcolor = color.white,
+                  size      = size.small,
+                  tooltip   = "Bear Exhaustion — bearish trading bias from high volume rejection at the high.\n" +
+                              "Upper wick/range: " + str.tostring(upper_wick_r, "#.##") + "\n" +
+                              "Vol: " + str.tostring(volume, format.volume))
+        array.push(pattern_labels, bear_exh_lbl)
 
     if is_climax and show_bubbles
-        new_lbl := label.new(bar_index, src,
+        label climax_lbl = label.new(bar_index, src,
                   str.tostring(volume, format.volume),
                   xloc      = xloc.bar_index,
                   yloc      = yloc.price,
@@ -230,9 +261,7 @@ if barstate.isconfirmed and in_window
                   style     = label.style_label_center,
                   textcolor = chart.fg_color,
                   size      = size.small)
-
-    if not na(new_lbl)
-        array.push(pattern_labels, new_lbl)
+        array.push(pattern_labels, climax_lbl)
 
 // Significant level lines
 if barstate.isconfirmed and is_climax and show_levels and in_window
@@ -243,6 +272,29 @@ if barstate.isconfirmed and is_climax and show_levels and in_window
              style  = line.style_dashed,
              width  = 2)
     array.push(level_lines, new_line)
+
+// Color legend
+if barstate.islast
+    table.clear(legend_tbl, 0, 0, 1, 7)
+    if show_legend
+        color head_bg = color.new(chart.fg_color, 85)
+        color txt_col = chart.fg_color
+        table.cell(legend_tbl, 0, 0, "Color", bgcolor = head_bg, text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 1, 0, "Meaning", bgcolor = head_bg, text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 1, "↑A", bgcolor = bull_abs_col, text_color = color.white, text_size = size.small)
+        table.cell(legend_tbl, 1, 1, "Bull Absorption", text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 2, "↓A", bgcolor = bear_abs_col, text_color = color.white, text_size = size.small)
+        table.cell(legend_tbl, 1, 2, "Bear Absorption", text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 3, "↑X", bgcolor = bull_exh_col, text_color = color.white, text_size = size.small)
+        table.cell(legend_tbl, 1, 3, "Bull Exhaustion", text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 4, "↓X", bgcolor = bear_exh_col, text_color = color.white, text_size = size.small)
+        table.cell(legend_tbl, 1, 4, "Bear Exhaustion", text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 5, "", bgcolor = bull_hi)
+        table.cell(legend_tbl, 1, 5, "Bull Delta Bias", text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 6, "", bgcolor = bear_hi)
+        table.cell(legend_tbl, 1, 6, "Bear Delta Bias", text_color = txt_col, text_size = size.small)
+        table.cell(legend_tbl, 0, 7, "", bgcolor = neut_col)
+        table.cell(legend_tbl, 1, 7, "Neutral Delta", text_color = txt_col, text_size = size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  HOUSE-KEEPING  (pattern labels tracked separately — hint_lbl is never pruned)

@@ -1,0 +1,582 @@
+//@version=5
+// JOIN US TELEGRAM >> t.me/eyops
+indicator('W15 - Eyops', overlay=true)
+
+// ========== DASHBOARD INPUTS ==========
+show_dashboard = input(true, '📊 Show Dashboard')
+show_combined_signals = input(true, '🎯 Show Combined Signals')
+reverse_signals = input(false, '🔄 Reverse Signals')
+use_stop_loss = input(true, '🛑 Use Stop Loss')
+stop_loss_percent = input.float(2.0, '🛑 Stop Loss %', minval=0.1, maxval=10.0, step=0.1)
+enable_reverse_on_stop = input(true, '🔄 Open Reverse Trade After Stop Loss')
+use_profit_stop = input(true, '💰 Use Profit Stop')
+profit_stop_percent = input.float(3.0, '💰 Profit Stop %', minval=0.5, maxval=20.0, step=0.1)
+commission_percent = input.float(0.06, '💸 Commission % (Entry+Exit)', minval=0.01, maxval=1.0, step=0.01)
+
+// ========== SSL BASELINE SETTINGS ==========
+show_Baseline = true
+show_SSL1 = false
+show_atr = false
+
+//ATR
+atrlen = input(14, 'ATR Period')
+mult = input.float(1, 'ATR Multi', step=0.1)
+smoothing = "WMA"
+
+ma_function(source, atrlen) =>
+    if smoothing == 'RMA'
+        ta.rma(source, atrlen)
+    else
+        if smoothing == 'SMA'
+            ta.sma(source, atrlen)
+        else
+            if smoothing == 'EMA'
+                ta.ema(source, atrlen)
+            else
+                ta.wma(source, atrlen)
+atr_slen = ma_function(ta.tr(true), atrlen)
+
+////ATR Up/Low Bands
+upper_band = atr_slen * mult + close
+lower_band = close - atr_slen * mult
+
+////BASELINE / SSL1 / SSL2 / EXIT MOVING AVERAGE VALUES
+maType = "EMA"
+len = input(title='EMA Length', defval=100)
+
+SSL2Type = "JMA"
+len2 = 5
+//
+SSL3Type = "HMA"
+len3 = 15
+src = input(title='Source-1', defval=close)
+
+//
+tema(src, len) =>
+    ema1 = ta.ema(src, len)
+    ema2 = ta.ema(ema1, len)
+    ema3 = ta.ema(ema2, len)
+    3 * ema1 - 3 * ema2 + ema3
+kidiv = 1
+
+jurik_phase = 3
+jurik_power = 1
+volatility_lookback = 10
+//MF
+beta = 0.8
+feedback = false
+z = 0.5
+//EDSMA
+ssfLength = 20
+ssfPoles = 2
+
+//----
+
+//EDSMA
+get2PoleSSF(src, length) =>
+    PI = 2 * math.asin(1)
+    arg = math.sqrt(2) * PI / length
+    a1 = math.exp(-arg)
+    b1 = 2 * a1 * math.cos(arg)
+    c2 = b1
+    c3 = -math.pow(a1, 2)
+    c1 = 1 - c2 - c3
+
+    ssf = 0.0
+    ssf := c1 * src + c2 * nz(ssf[1]) + c3 * nz(ssf[2])
+    ssf
+
+get3PoleSSF(src, length) =>
+    PI = 2 * math.asin(1)
+
+    arg = PI / length
+    a1 = math.exp(-arg)
+    b1 = 2 * a1 * math.cos(1.738 * arg)
+    c1 = math.pow(a1, 2)
+
+    coef2 = b1 + c1
+    coef3 = -(c1 + b1 * c1)
+    coef4 = math.pow(c1, 2)
+    coef1 = 1 - coef2 - coef3 - coef4
+
+    ssf = 0.0
+    ssf := coef1 * src + coef2 * nz(ssf[1]) + coef3 * nz(ssf[2]) + coef4 * nz(ssf[3])
+    ssf
+
+ma(type, src, len) =>
+    float result = 0
+    if type == 'TMA'
+        result := ta.sma(ta.sma(src, math.ceil(len / 2)), math.floor(len / 2) + 1)
+        result
+    if type == 'MF'
+        ts = 0.
+        b = 0.
+        c = 0.
+        os = 0.
+        //----
+        alpha = 2 / (len + 1)
+        a = feedback ? z * src + (1 - z) * nz(ts[1], src) : src
+        //----
+        b := a > alpha * a + (1 - alpha) * nz(b[1], a) ? a : alpha * a + (1 - alpha) * nz(b[1], a)
+        c := a < alpha * a + (1 - alpha) * nz(c[1], a) ? a : alpha * a + (1 - alpha) * nz(c[1], a)
+        os := a == b ? 1 : a == c ? 0 : os[1]
+        //----
+        upper = beta * b + (1 - beta) * c
+        lower = beta * c + (1 - beta) * b
+        ts := os * upper + (1 - os) * lower
+        result := ts
+        result
+    if type == 'LSMA'
+        result := ta.linreg(src, len, 0)
+        result
+    if type == 'SMA'  // Simple
+        result := ta.sma(src, len)
+        result
+    if type == 'EMA'  // Exponential
+        result := ta.ema(src, len)
+        result
+    if type == 'DEMA'  // Double Exponential
+        e = ta.ema(src, len)
+        result := 2 * e - ta.ema(e, len)
+        result
+    if type == 'TEMA'  // Triple Exponential
+        e = ta.ema(src, len)
+        result := 3 * (e - ta.ema(e, len)) + ta.ema(ta.ema(e, len), len)
+        result
+    if type == 'WMA'  // Weighted
+        result := ta.wma(src, len)
+        result
+    if type == 'VAMA'  // Volatility Adjusted
+        /// Copyright © 2019 to present, Joris Duyck (JD)
+        mid = ta.ema(src, len)
+        dev = src - mid
+        vol_up = ta.highest(dev, volatility_lookback)
+        vol_down = ta.lowest(dev, volatility_lookback)
+        result := mid + math.avg(vol_up, vol_down)
+        result
+    if type == 'HMA'  // Hull
+        result := ta.wma(2 * ta.wma(src, len / 2) - ta.wma(src, len), math.round(math.sqrt(len)))
+        result
+    if type == 'JMA'  // Jurik
+        /// Copyright © 2018 Alex Orekhov (everget)
+        /// Copyright © 2017 Jurik Research and Consulting.
+        phaseRatio = jurik_phase < -100 ? 0.5 : jurik_phase > 100 ? 2.5 : jurik_phase / 100 + 1.5
+        beta = 0.45 * (len - 1) / (0.45 * (len - 1) + 2)
+        alpha = math.pow(beta, jurik_power)
+        jma = 0.0
+        e0 = 0.0
+        e0 := (1 - alpha) * src + alpha * nz(e0[1])
+        e1 = 0.0
+        e1 := (src - e0) * (1 - beta) + beta * nz(e1[1])
+        e2 = 0.0
+        e2 := (e0 + phaseRatio * e1 - nz(jma[1])) * math.pow(1 - alpha, 2) + math.pow(alpha, 2) * nz(e2[1])
+        jma := e2 + nz(jma[1])
+        result := jma
+        result
+    if type == 'Kijun v2'
+        kijun = math.avg(ta.lowest(len), ta.highest(len))  //, (open + close)/2)
+        conversionLine = math.avg(ta.lowest(len / kidiv), ta.highest(len / kidiv))
+        delta = (kijun + conversionLine) / 2
+        result := delta
+        result
+    if type == 'McGinley'
+        mg = 0.0
+        mg := na(mg[1]) ? ta.ema(src, len) : mg[1] + (src - mg[1]) / (len * math.pow(src / mg[1], 4))
+        result := mg
+        result
+    if type == 'EDSMA'
+
+        zeros = src - nz(src[2])
+        avgZeros = (zeros + zeros[1]) / 2
+
+        // Ehlers Super Smoother Filter 
+        ssf = ssfPoles == 2 ? get2PoleSSF(avgZeros, ssfLength) : get3PoleSSF(avgZeros, ssfLength)
+
+        // Rescale filter in terms of Standard Deviations
+        stdev = ta.stdev(ssf, len)
+        scaledFilter = stdev != 0 ? ssf / stdev : 0
+
+        alpha = 5 * math.abs(scaledFilter) / len
+
+        edsma = 0.0
+        edsma := alpha * src + (1 - alpha) * nz(edsma[1])
+        result := edsma
+        result
+    result
+
+///SSL 1 and SSL2
+emaHigh = ma(maType, high, len)
+emaLow = ma(maType, low, len)
+
+//SSL1 VALUES
+Hlv = int(na)
+Hlv := close > emaHigh ? 1 : close < emaLow ? -1 : Hlv[1]
+sslDown = Hlv < 0 ? emaHigh : emaLow
+
+// ========== SSL SIGNALS ==========
+ssl_long = close > sslDown
+ssl_short = close < sslDown
+
+//MACD
+fast_length = input(title="Fast", defval=25)
+slow_length = input(title="Slow", defval=100)
+srck = input(title="Source-2", defval=close)
+signal_length = 9
+sma_source = "EMA"
+sma_signal = "EMA"
+
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(srck, fast_length) : ta.ema(srck, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(srck, slow_length) : ta.ema(srck, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+
+// ========== MACD SIGNALS ==========
+macd_long = hist > 0
+macd_short = hist < 0
+
+//BREAKOUT
+length = input.int(14)
+k      = input.float(0,'Circle',minval=0,step=.1)
+method = input.string('Atr','Circle Method',
+  options=['Atr','Stdev','Linreg'])
+show   = true
+
+upper = 0.,lower = 0.
+slope_ph = 0.,slope_pl = 0.
+srery = close
+n = bar_index
+
+ph = ta.pivothigh(length,length)
+pl = ta.pivotlow(length,length)
+slope = switch method
+    'Atr'      => ta.atr(length)/length*k
+    'Stdev'    => ta.stdev(srery,length)/length*k
+    'Linreg'   => math.abs(ta.sma(srery*bar_index,length)-ta.sma(srery,length)*ta.sma(bar_index,length))/ta.variance(n,length)/2*k
+
+slope_ph := ph ? slope : slope_ph[1]
+slope_pl := pl ? slope : slope_pl[1]
+
+upper := ph ? ph : upper[1] - slope_ph
+lower := pl ? pl : lower[1] + slope_pl
+
+// ========== BREAKOUT SIGNALS ==========
+// Trend bias based on position relative to dynamic support/resistance
+breakout_long = close > upper
+breakout_short = close < lower
+
+// ========== COMBINED STRATEGY SIGNALS ==========
+// All 3 indicators must agree on direction
+all_long = ssl_long and macd_long and breakout_long
+all_short = ssl_short and macd_short and breakout_short
+
+// Reverse logic
+final_long = reverse_signals ? all_short : all_long
+final_short = reverse_signals ? all_long : all_short
+
+// Signal tracking to show only once when direction changes
+var int position_state = 0  // 0: neutral, 1: long, -1: short
+var bool show_long_signal = false
+var bool show_short_signal = false
+
+// Only show signals when all 3 indicators agree and state changes
+if final_long and position_state != 1
+    show_long_signal := true
+    position_state := 1
+else
+    show_long_signal := false
+
+if final_short and position_state != -1
+    show_short_signal := true
+    position_state := -1
+else
+    show_short_signal := false
+
+// ========== MANUAL BACKTEST SYSTEM ==========
+var int total_trades = 0
+var int winning_trades = 0
+var float total_profit = 0.0
+var float entry_price = 0.0
+var bool in_long = false
+var bool in_short = false
+var float last_trade_profit = 0.0
+var int stop_loss_hits = 0
+var int profit_stop_hits = 0
+var bool reverse_entry_triggered = false
+var float total_commission = 0.0
+var int last_profit_stop_direction = 0  // 1: long profit stop, -1: short profit stop, 0: none
+
+// Commission calculation (entry + exit)
+total_commission_per_trade = commission_percent * 2  // Entry and exit commission
+
+// Stop Loss Check
+long_stop_loss = use_stop_loss and in_long and ((entry_price - close) / entry_price * 100) >= stop_loss_percent
+short_stop_loss = use_stop_loss and in_short and ((close - entry_price) / entry_price * 100) >= stop_loss_percent
+
+// Profit Stop Check
+long_profit_stop = use_profit_stop and in_long and ((close - entry_price) / entry_price * 100) >= profit_stop_percent
+short_profit_stop = use_profit_stop and in_short and ((entry_price - close) / entry_price * 100) >= profit_stop_percent
+
+// Profit Stop Management (profit stop check first)
+if long_profit_stop
+    // Close long with profit stop
+    long_profit_raw = (close - entry_price) / entry_price * 100
+    long_profit = long_profit_raw - total_commission_per_trade
+    total_profit := total_profit + long_profit
+    total_commission := total_commission + total_commission_per_trade
+    total_trades := total_trades + 1
+    profit_stop_hits := profit_stop_hits + 1
+    winning_trades := winning_trades + 1  // Profit stop is winning trade
+    last_trade_profit := long_profit
+    last_profit_stop_direction := 1  // Long profit stop
+    in_long := false
+    
+    // Show profit stop label
+    label.new(bar_index, low, 
+             "💰 LONG PROFIT: " + str.tostring(long_profit, '#.##') + "% (Com:" + str.tostring(total_commission_per_trade, '#.##') + "%)", 
+             style=label.style_label_up, 
+             color=color.green, 
+             textcolor=color.white, 
+             size=size.small)
+
+if short_profit_stop
+    // Close short with profit stop
+    short_profit_raw = (entry_price - close) / entry_price * 100
+    short_profit = short_profit_raw - total_commission_per_trade
+    total_profit := total_profit + short_profit
+    total_commission := total_commission + total_commission_per_trade
+    total_trades := total_trades + 1
+    profit_stop_hits := profit_stop_hits + 1
+    winning_trades := winning_trades + 1  // Profit stop is winning trade
+    last_trade_profit := short_profit
+    last_profit_stop_direction := -1  // Short profit stop
+    in_short := false
+    
+    // Show profit stop label
+    label.new(bar_index, high, 
+             "💰 SHORT PROFIT: " + str.tostring(short_profit, '#.##') + "% (Com:" + str.tostring(total_commission_per_trade, '#.##') + "%)", 
+             style=label.style_label_down, 
+             color=color.green, 
+             textcolor=color.white, 
+             size=size.small)
+
+// Trade Management - Normal Signals
+if show_long_signal and not in_long and not reverse_entry_triggered
+    // Check if same direction trade is blocked after profit stop
+    can_open_long = last_profit_stop_direction != 1  // Can open long if no long profit stop
+    
+    if in_short
+        // Close short, calculate profit with commission
+        short_profit_raw = (entry_price - close) / entry_price * 100
+        short_profit = short_profit_raw - total_commission_per_trade
+        total_profit := total_profit + short_profit
+        total_commission := total_commission + total_commission_per_trade
+        total_trades := total_trades + 1
+        last_trade_profit := short_profit
+        if short_profit > 0
+            winning_trades := winning_trades + 1
+        in_short := false
+        last_profit_stop_direction := 0  // Reset profit stop direction
+        
+        // Show profit label for closed short (with commission)
+        label.new(bar_index, high, 
+                 "📊 SHORT CLOSE: " + str.tostring(short_profit, '#.##') + "% (Com:" + str.tostring(total_commission_per_trade, '#.##') + "%)", 
+                 style=label.style_label_down, 
+                 color=short_profit > 0 ? color.green : color.red, 
+                 textcolor=color.white, 
+                 size=size.small)
+    
+    if can_open_long and not in_long
+        // Open long (profit stop allows)
+        entry_price := close
+        in_long := true
+        last_profit_stop_direction := 0  // Reset profit stop direction
+        
+        // Show entry label
+        label.new(bar_index, low, 
+                 "🎯 LONG OPEN", 
+                 style=label.style_label_up, 
+                 color=color.lime, 
+                 textcolor=color.white, 
+                 size=size.small)
+
+if show_short_signal and not in_short and not reverse_entry_triggered
+    // Check if same direction trade is blocked after profit stop
+    can_open_short = last_profit_stop_direction != -1  // Can open short if no short profit stop
+    
+    if in_long
+        // Close long, calculate profit with commission
+        long_profit_raw = (close - entry_price) / entry_price * 100
+        long_profit = long_profit_raw - total_commission_per_trade
+        total_profit := total_profit + long_profit
+        total_commission := total_commission + total_commission_per_trade
+        total_trades := total_trades + 1
+        last_trade_profit := long_profit
+        if long_profit > 0
+            winning_trades := winning_trades + 1
+        in_long := false
+        last_profit_stop_direction := 0  // Reset profit stop direction
+        
+        // Show profit label for closed long (with commission)
+        label.new(bar_index, low, 
+                 "📊 LONG CLOSE: " + str.tostring(long_profit, '#.##') + "% (Com:" + str.tostring(total_commission_per_trade, '#.##') + "%)", 
+                 style=label.style_label_up, 
+                 color=long_profit > 0 ? color.green : color.red, 
+                 textcolor=color.white, 
+                 size=size.small)
+    
+    if can_open_short and not in_short
+        // Open short (profit stop allows)
+        entry_price := close
+        in_short := true
+        last_profit_stop_direction := 0  // Reset profit stop direction
+        
+        // Show entry label
+        label.new(bar_index, high, 
+                 "🎯 SHORT OPEN", 
+                 style=label.style_label_down, 
+                 color=color.fuchsia, 
+                 textcolor=color.white, 
+                 size=size.small)
+
+// Stop Loss Management
+if long_stop_loss and not long_profit_stop  // Stop loss only if no profit stop
+    // Close long with stop loss
+    long_profit_raw = (close - entry_price) / entry_price * 100
+    long_profit = long_profit_raw - total_commission_per_trade
+    total_profit := total_profit + long_profit
+    total_commission := total_commission + total_commission_per_trade
+    total_trades := total_trades + 1
+    stop_loss_hits := stop_loss_hits + 1
+    last_trade_profit := long_profit
+    in_long := false
+    last_profit_stop_direction := 0  // Reset profit stop direction
+    
+    // Show stop loss label
+    label.new(bar_index, low, 
+             "🛑 LONG STOP: " + str.tostring(long_profit, '#.##') + "% (Com:" + str.tostring(total_commission_per_trade, '#.##') + "%)", 
+             style=label.style_label_up, 
+             color=color.red, 
+             textcolor=color.white, 
+             size=size.small)
+    
+    // Open reverse position if enabled
+    if enable_reverse_on_stop
+        entry_price := close
+        in_short := true
+        reverse_entry_triggered := true
+        
+        // Show reverse entry label
+        label.new(bar_index, high, 
+                 "🔄 REVERSE SHORT", 
+                 style=label.style_label_down, 
+                 color=color.orange, 
+                 textcolor=color.white, 
+                 size=size.small)
+
+if short_stop_loss and not short_profit_stop  // Stop loss only if no profit stop
+    // Close short with stop loss
+    short_profit_raw = (entry_price - close) / entry_price * 100
+    short_profit = short_profit_raw - total_commission_per_trade
+    total_profit := total_profit + short_profit
+    total_commission := total_commission + total_commission_per_trade
+    total_trades := total_trades + 1
+    stop_loss_hits := stop_loss_hits + 1
+    last_trade_profit := short_profit
+    in_short := false
+    last_profit_stop_direction := 0  // Reset profit stop direction
+    
+    // Show stop loss label
+    label.new(bar_index, high, 
+             "🛑 SHORT STOP: " + str.tostring(short_profit, '#.##') + "% (Com:" + str.tostring(total_commission_per_trade, '#.##') + "%)", 
+             style=label.style_label_down, 
+             color=color.red, 
+             textcolor=color.white, 
+             size=size.small)
+    
+    // Open reverse position if enabled
+    if enable_reverse_on_stop
+        entry_price := close
+        in_long := true
+        reverse_entry_triggered := true
+        
+        // Show reverse entry label
+        label.new(bar_index, low, 
+                 "🔄 REVERSE LONG", 
+                 style=label.style_label_up, 
+                 color=color.orange, 
+                 textcolor=color.white, 
+                 size=size.small)
+
+// Reset reverse entry trigger when new normal signal appears
+if show_long_signal or show_short_signal
+    reverse_entry_triggered := false
+
+// Calculate metrics
+win_rate = total_trades > 0 ? (winning_trades / total_trades) * 100 : 0
+
+// ========== COMBINED SIGNALS VISUALIZATION ==========
+plotshape(show_combined_signals and show_long_signal and not reverse_signals, title='🎯 COMBINED LONG', style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.large, text='🎯 LONG')
+plotshape(show_combined_signals and show_long_signal and reverse_signals, title='🔄 REVERSE SHORT', style=shape.triangleup, location=location.belowbar, color=color.new(color.orange, 0), size=size.large, text='🔄 SHORT')
+
+plotshape(show_combined_signals and show_short_signal and not reverse_signals, title='🎯 COMBINED SHORT', style=shape.triangledown, location=location.abovebar, color=color.new(color.fuchsia, 0), size=size.large, text='🎯 SHORT')
+plotshape(show_combined_signals and show_short_signal and reverse_signals, title='🔄 REVERSE LONG', style=shape.triangledown, location=location.abovebar, color=color.new(color.orange, 0), size=size.large, text='🔄 LONG')
+
+// ========== DASHBOARD ==========
+if show_dashboard and barstate.islast
+    var table dashboard = table.new(position.top_right, 2, 15, bgcolor=color.new(color.white, 80), border_width=2)
+    
+    table.cell(dashboard, 0, 0, '📊 W15 DASHBOARD', text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.normal)
+    table.cell(dashboard, 1, 0, '🎯 SSL+MACD+Breakout', text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    
+    table.cell(dashboard, 0, 1, 'Reverse Signals', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    reverse_status = reverse_signals ? '🔄 ACTIVE' : '⭕ INACTIVE'
+    table.cell(dashboard, 1, 1, reverse_status, text_color=reverse_signals ? color.orange : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 2, 'Stop Loss', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    stop_status = use_stop_loss ? '🛑 ' + str.tostring(stop_loss_percent, '#.#') + '%' : '⭕ INACTIVE'
+    table.cell(dashboard, 1, 2, stop_status, text_color=use_stop_loss ? color.red : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 3, 'Profit Stop', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    profit_stop_status = use_profit_stop ? '💰 ' + str.tostring(profit_stop_percent, '#.#') + '%' : '⭕ INACTIVE'
+    table.cell(dashboard, 1, 3, profit_stop_status, text_color=use_profit_stop ? color.green : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 4, 'Reverse Trade', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    reverse_trade_status = enable_reverse_on_stop ? '🔄 ACTIVE' : '⭕ INACTIVE'
+    table.cell(dashboard, 1, 4, reverse_trade_status, text_color=enable_reverse_on_stop ? color.orange : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 5, 'Commission Rate', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    commission_display = '💸 ' + str.tostring(total_commission_per_trade, '#.##') + '%'
+    table.cell(dashboard, 1, 5, commission_display, text_color=color.orange, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 6, 'Total Trades', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 6, str.tostring(total_trades), text_color=color.black, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 7, 'Winning Trades', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 7, str.tostring(winning_trades), text_color=color.black, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 8, 'Losing Trades', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 8, str.tostring(total_trades - winning_trades), text_color=color.black, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 9, 'Stop Loss Count', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 9, str.tostring(stop_loss_hits), text_color=stop_loss_hits > 0 ? color.red : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 10, 'Profit Stop Count', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 10, str.tostring(profit_stop_hits), text_color=profit_stop_hits > 0 ? color.green : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 11, 'Win Rate', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 11, str.tostring(win_rate, '#.##') + '%', text_color=win_rate >= 50 ? color.green : color.red, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 12, 'Net Profit', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 12, str.tostring(total_profit, '#.##') + '%', text_color=total_profit >= 0 ? color.green : color.red, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    table.cell(dashboard, 0, 13, 'Total Commission', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 13, str.tostring(total_commission, '#.##') + '%', text_color=color.red, bgcolor=color.new(color.white, 30), text_size=size.small)
+    
+    // Current position
+    current_pos = in_long ? '📈 LONG' : in_short ? '📉 SHORT' : '⚪ NEUTRAL'
+    table.cell(dashboard, 0, 14, 'Current Position', text_color=color.black, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(dashboard, 1, 14, current_pos, text_color=in_long ? color.green : in_short ? color.red : color.gray, bgcolor=color.new(color.white, 30), text_size=size.small)
+
+// Clean chart - background removed

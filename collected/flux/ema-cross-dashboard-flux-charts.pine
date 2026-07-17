@@ -1,0 +1,447 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © fluxchart
+
+//@version=5
+const bool DEBUG = false
+const int maxBoxesCount = 500
+const int lastXMarketStructures = 10
+const int maxDistanceToLastBar = 750 // Affects Running Time
+const int atrLen = 10
+
+indicator(title = 'EMA Cross Dashboard | Flux Charts', overlay = true, max_boxes_count = maxBoxesCount, max_labels_count = maxBoxesCount, max_lines_count = maxBoxesCount, max_bars_back = 100)
+
+tickersPreset = DEBUG ? input.string("Crypto", "", options = ["Crypto", "Stocks", "Forex", "Futures", "Custom"], inline = "a", group = "Timeframes", display = display.none) : "Custom"
+overrideTF = DEBUG ? input.timeframe("", "", group = "Timeframes", inline = "a", display = display.none) : ""
+
+//warning = input.color(color.black, "Please only select timeframes >= than the current chart.", group = "Timeframes", inline = "warning", display = display.none)
+
+ticker1EnabledCustom = input.bool(true, "", group = "Timeframes", inline = "1", display = display.none)
+ticker1Custom = syminfo.tickerid
+ticker1TFCustom = input.timeframe("", "", group = "Timeframes", inline = "1", display = display.none)
+ticker1EMA1Length = input.int(9, "", group = "Timeframes", inline = "1", display = display.none)
+ticker1EMA2Length = input.int(21, "", group = "Timeframes", inline = "1", display = display.none)
+ticker1Plot = DEBUG ? input.bool(false, "Plot", group = "Timeframes", inline = "1", display = display.none) : true
+ticker1Color = DEBUG ? input.color(color.red, "", group = "Timeframes", inline = "1", display = display.none) : color.red
+
+ticker2EnabledCustom = input.bool(true, "", group = "Timeframes", inline = "2", display = display.none)
+ticker2Custom = syminfo.tickerid
+ticker2TFCustom = input.timeframe("", "", group = "Timeframes", inline = "2", display = display.none)
+ticker2EMA1Length = input.int(21, "", group = "Timeframes", inline = "2", display = display.none)
+ticker2EMA2Length = input.int(50, "", group = "Timeframes", inline = "2", display = display.none)
+ticker2Plot = DEBUG ? input.bool(false, "Plot", group = "Timeframes", inline = "2", display = display.none) : true
+ticker2Color = DEBUG ? input.color(color.green, "", group = "Timeframes", inline = "2", display = display.none) : color.green
+
+ticker3EnabledCustom = input.bool(true, "", group = "Timeframes", inline = "3", display = display.none)
+ticker3Custom = syminfo.tickerid
+ticker3TFCustom = input.timeframe("", "", group = "Timeframes", inline = "3", display = display.none)
+ticker3EMA1Length = input.int(50, "", group = "Timeframes", inline = "3", display = display.none)
+ticker3EMA2Length = input.int(100, "", group = "Timeframes", inline = "3", display = display.none)
+ticker3Plot = DEBUG ? input.bool(false, "Plot", group = "Timeframes", inline = "3", display = display.none) : true
+ticker3Color = DEBUG ? input.color(color.orange, "", group = "Timeframes", inline = "3", display = display.none) : color.orange
+
+ticker4EnabledCustom = input.bool(true, "", group = "Timeframes", inline = "4", display = display.none)
+ticker4Custom = syminfo.tickerid
+ticker4TFCustom = input.timeframe("", "", group = "Timeframes", inline = "4", display = display.none)
+ticker4EMA1Length = input.int(100, "", group = "Timeframes", inline = "4", display = display.none)
+ticker4EMA2Length = input.int(200, "", group = "Timeframes", inline = "4", display = display.none)
+ticker4Plot = DEBUG ? input.bool(false, "Plot", group = "Timeframes", inline = "4", display = display.none) : true
+ticker4Color = DEBUG ? input.color(color.blue, "", group = "Timeframes", inline = "4", display = display.none) : color.blue
+
+ticker5EnabledCustom = input.bool(true, "", group = "Timeframes", inline = "5", display = display.none)
+ticker5Custom = syminfo.tickerid
+ticker5TFCustom = input.timeframe("", "", group = "Timeframes", inline = "5", display = display.none)
+ticker5EMA1Length = input.int(200, "", group = "Timeframes", inline = "5", display = display.none)
+ticker5EMA2Length = input.int(250, "", group = "Timeframes", inline = "5", display = display.none)
+ticker5Plot = DEBUG ? input.bool(false, "Plot", group = "Timeframes", inline = "5", display = display.none) : true
+ticker5Color = DEBUG ? input.color(color.purple, "", group = "Timeframes", inline = "5", display = display.none) : color.purple
+//
+
+EMASource = input.source(close, "EMA Source", group = "General Configuration", display = display.none)
+displayDashboard = input.bool(true, "Display Dashboard", group = "General Configuration", inline = "display", display = display.none)
+plotCrosses = input.bool(true, "Crosses", group = "General Configuration", inline = "display", display = display.none)
+plotLines = DEBUG ? input.bool(false, "Lines", group = "General Configuration", inline = "display", display = display.none) : false
+
+screenerPosition = input.string("Top Center", "Position", options = ["Top Right", "Top Center", "Right Center", "Middle Center", "Left Center", "Bottom Center"], group = "Style", display = display.none)
+fillBackgrounds = input.bool(true, "Fill Backgrounds", group = "Style", display = display.none)
+screenerColor = input.color(#1B1F2B, 'Background', group = 'Style', inline = "1", display = display.none)
+frameColor = input.color(color.rgb(255, 255, 255), 'Frame', inline = "1", group = 'Style', display = display.none)
+borderColor = input.color(color.rgb(255, 255, 255), 'Border', inline = "2", group = 'Style', display = display.none)
+textColor = input.color(color.white, 'Text', group = 'Style', inline = "2", display = display.none)
+bullishColor = input.color(#089981, 'Bullish', inline = 'obColor', group = 'Style', display = display.none)
+bearishColor = input.color(#ff5252, 'Bearish', inline = 'obColor', group = 'Style', display = display.none)
+
+atr = ta.atr(atrLen)
+
+getPosition (positionText) =>
+    if positionText == "Top Right"
+        position.top_right
+    else if positionText == "Top Center"
+        position.top_center
+    else if positionText == "Right Center"
+        position.middle_right
+    else if positionText == "Left Center"
+        position.middle_left
+    else if positionText == "Bottom Center"
+        position.bottom_center
+    else if positionText == "Middle Center"
+        position.middle_center
+
+convertTimeToStr (ms) =>
+    seconds = int(ms / 1000)
+    if seconds >= 86400
+        daysCount = int(seconds / 86400)
+        str.tostring(daysCount) + " Day" + (daysCount > 1 ? "s" : "")
+    else if seconds >= 3600
+        hourCount = int(seconds / 3600)
+        str.tostring(hourCount) + " Hour" + (hourCount > 1 ? "s" : "")
+    else
+        minCount = int(seconds / 60)
+        str.tostring(minCount) + " Min" + (minCount > 1 ? "s" : "")
+
+convertTimeToStrCompact (ms) =>
+    seconds = int(ms / 1000)
+    if seconds >= 86400
+        daysCount = int(seconds / 86400)
+        str.tostring(daysCount) + "d" + (daysCount > 1 ? "" : "")
+    else if seconds >= 3600
+        hourCount = int(seconds / 3600)
+        str.tostring(hourCount) + "h" + (hourCount > 1 ? "" : "")
+    else
+        minCount = int(seconds / 60)
+        str.tostring(minCount) + "m" + (minCount > 1 ? "" : "")
+
+var table screener = table.new(getPosition(screenerPosition), 40, 40, bgcolor = screenerColor, frame_width = 2, frame_color = frameColor, border_width = 1, border_color = borderColor)
+
+type customCross
+    int lastTime = na
+    bool upCross = false
+
+type tickerInfo
+    int index = na
+    string symbol
+    string timeframeStr = na
+    int length1 = na
+    int length2 = na
+    bool isEnabled = false
+
+    string ema1
+    string ema2
+    string closeF
+    float atrF
+    customCross lastCross
+
+ticker1 = ""
+ticker1TF = overrideTF
+ticker1Enabled = true
+
+ticker2 = ""
+ticker2TF = overrideTF
+ticker2Enabled = true
+
+ticker3 = ""
+ticker3TF = overrideTF
+ticker3Enabled = true
+
+ticker4 = ""
+ticker4TF = overrideTF
+ticker4Enabled = true
+
+ticker5 = ""
+ticker5TF = overrideTF
+ticker5Enabled = true
+
+if tickersPreset == "Crypto"
+    ticker1 := "BINANCE:BTCUSDT"
+    ticker2 := "BINANCE:ETHUSDT"
+    ticker3 := "BINANCE:SOLUSDT"
+    ticker4 := "BINANCE:XRPUSDT"
+    ticker5 := "BINANCE:ADAUSDT"
+else if tickersPreset == "Stocks"
+    ticker1 := "NASDAQ:AAPL"
+    ticker2 := "NASDAQ:TSLA"
+    ticker3 := "NASDAQ:NVDA"
+    ticker4 := "PYTH:SPY"
+    ticker5 := "NASDAQ:QQQ"
+else if tickersPreset == "Forex"
+    ticker1 := "OANDA:EURUSD"
+    ticker2 := "OANDA:GBPUSD"
+    ticker3 := "OANDA:USDJPY"
+    ticker4 := "OANDA:GBPJPY"
+    ticker5 := "OANDA:AUDUSD"
+else if tickersPreset == "Futures"
+    ticker1 := "CME_MINI:ES1!"
+    ticker2 := "CME_MINI:NQ1!"
+    ticker3 := "NYMEX:CL1!"
+    ticker4 := "COMEX:GC1!"
+    ticker5 := "CBOT_MINI:YM1!"
+if tickersPreset == "Custom"
+    ticker1 := ticker1Custom
+    ticker1TF := ticker1TFCustom
+    ticker1Enabled := ticker1EnabledCustom
+
+    ticker2 := ticker2Custom
+    ticker2TF := ticker2TFCustom
+    ticker2Enabled := ticker2EnabledCustom
+
+    ticker3 := ticker3Custom
+    ticker3TF := ticker3TFCustom
+    ticker3Enabled := ticker3EnabledCustom
+
+    ticker4 := ticker4Custom
+    ticker4TF := ticker4TFCustom
+    ticker4Enabled := ticker4EnabledCustom
+
+    ticker5 := ticker5Custom
+    ticker5TF := ticker5TFCustom
+    ticker5Enabled := ticker5EnabledCustom
+
+var tickerInfo[] tickerInfos = array.from(tickerInfo.new(1, ticker1, ticker1TF, ticker1EMA1Length, ticker1EMA2Length, ticker1Enabled), tickerInfo.new(2, ticker2, ticker2TF, ticker2EMA1Length, ticker2EMA2Length, ticker2Enabled), tickerInfo.new(3, ticker3, ticker3TF, ticker3EMA1Length, ticker3EMA2Length, ticker3Enabled), tickerInfo.new(4, ticker4, ticker4TF, ticker4EMA1Length, ticker4EMA2Length, ticker4Enabled), tickerInfo.new(5, ticker5, ticker5TF, ticker5EMA1Length, ticker5EMA2Length, ticker5Enabled))
+
+isTimeframeLower (timeframe1F, timeframe2F) =>
+    timeframe.in_seconds(timeframe1F) < timeframe.in_seconds(timeframe2F)
+
+getMinTimeframe (timeframe1F, timeframe2F) =>
+    if isTimeframeLower(timeframe1F, timeframe2F)
+        timeframe1F
+    else
+        timeframe2F
+
+getMaxTimeframe (timeframe1F, timeframe2F) =>
+    if isTimeframeLower(timeframe1F, timeframe2F)
+        timeframe2F
+    else
+        timeframe1F
+
+formatTimeframeString (formatTimeframe) =>
+    timeframeF = formatTimeframe == "" ? timeframe.period : formatTimeframe
+    
+    if str.contains(timeframeF, "D") or str.contains(timeframeF, "W") or str.contains(timeframeF, "S") or str.contains(timeframeF, "M")
+        timeframeF
+    else
+        seconds = timeframe.in_seconds(timeframeF)
+        if seconds >= 3600
+            hourCount = int(seconds / 3600)
+            str.tostring(hourCount) + " Hour" + (hourCount > 1 ? "s" : "")
+        else
+            timeframeF + " Min"
+
+getData (tickerInfo tickerInfoF, simple string symbolF, simple string timeframeF, simple int length1, simple int length2) =>
+    [ema1F, ema2F, closeF, atrF] = request.security(ticker.standard(symbolF), timeframeF, [str.tostring(ta.ema(EMASource, length1), format.mintick), str.tostring(ta.ema(EMASource, length2), format.mintick), str.tostring(close, format.mintick), atr])
+    [ema1F, ema2F, closeF, atrF]
+
+getTFData(tickerInfo tickerInfoF, simple string symbolF, simple string timeframeF, simple int length1, simple int length2) =>
+    if tickerInfoF.isEnabled
+        getData(tickerInfoF, symbolF, timeframeF, length1, length2)
+    else
+        [na, na, na, na]
+
+
+[ema1Ticker1, ema2Ticker1, closeTicker1, atrTicker1] = getTFData(tickerInfos.get(0), ticker1, ticker1TF, ticker1EMA1Length, ticker1EMA2Length)
+tickerInfo1 = tickerInfos.get(0)
+tickerInfo1.ema1 := ema1Ticker1
+tickerInfo1.ema2 := ema2Ticker1
+tickerInfo1.closeF := closeTicker1
+tickerInfo1.atrF := atrTicker1
+var lastCrossTicker1 = customCross.new()
+ticker1CrossOver = ta.crossover(str.tonumber(ema1Ticker1), str.tonumber(ema2Ticker1))
+ticker1CrossUnder = ta.crossunder(str.tonumber(ema1Ticker1), str.tonumber(ema2Ticker1))
+if ticker1CrossOver
+    lastCrossTicker1.lastTime := time
+    lastCrossTicker1.upCross := true
+
+if ticker1CrossUnder
+    lastCrossTicker1.lastTime := time
+    lastCrossTicker1.upCross := false
+tickerInfo1.lastCross := lastCrossTicker1
+
+[ema1Ticker2, ema2Ticker2, closeTicker2, atrTicker2] = getTFData(tickerInfos.get(1), ticker2, ticker2TF, ticker2EMA1Length, ticker2EMA2Length)
+tickerInfo2 = tickerInfos.get(1)
+tickerInfo2.ema1 := ema1Ticker2
+tickerInfo2.ema2 := ema2Ticker2
+tickerInfo2.closeF := closeTicker2
+tickerInfo2.atrF := atrTicker2
+var lastCrossTicker2 = customCross.new()
+ticker2CrossOver = ta.crossover(str.tonumber(ema1Ticker2), str.tonumber(ema2Ticker2))
+ticker2CrossUnder = ta.crossunder(str.tonumber(ema1Ticker2), str.tonumber(ema2Ticker2))
+if ticker2CrossOver
+    lastCrossTicker2.lastTime := time
+    lastCrossTicker2.upCross := true
+
+if ticker2CrossUnder
+    lastCrossTicker2.lastTime := time
+    lastCrossTicker2.upCross := false
+tickerInfo2.lastCross := lastCrossTicker2
+
+[ema1Ticker3, ema2Ticker3, closeTicker3, atrTicker3] = getTFData(tickerInfos.get(2), ticker3, ticker3TF, ticker3EMA1Length, ticker3EMA2Length)
+tickerInfo3 = tickerInfos.get(2)
+tickerInfo3.ema1 := ema1Ticker3
+tickerInfo3.ema2 := ema2Ticker3
+tickerInfo3.closeF := closeTicker3
+tickerInfo3.atrF := atrTicker3
+var lastCrossTicker3 = customCross.new()
+ticker3CrossOver = ta.crossover(str.tonumber(ema1Ticker3), str.tonumber(ema2Ticker3))
+ticker3CrossUnder = ta.crossunder(str.tonumber(ema1Ticker3), str.tonumber(ema2Ticker3))
+if ticker3CrossOver
+    lastCrossTicker3.lastTime := time
+    lastCrossTicker3.upCross := true
+
+if ticker3CrossUnder
+    lastCrossTicker3.lastTime := time
+    lastCrossTicker3.upCross := false
+tickerInfo3.lastCross := lastCrossTicker3
+
+[ema1Ticker4, ema2Ticker4, closeTicker4, atrTicker4] = getTFData(tickerInfos.get(3), ticker4, ticker4TF, ticker4EMA1Length, ticker4EMA2Length)
+tickerInfo4 = tickerInfos.get(3)
+tickerInfo4.ema1 := ema1Ticker4
+tickerInfo4.ema2 := ema2Ticker4
+tickerInfo4.closeF := closeTicker4
+tickerInfo4.atrF := atrTicker4
+var lastCrossTicker4 = customCross.new()
+ticker4CrossOver = ta.crossover(str.tonumber(ema1Ticker4), str.tonumber(ema2Ticker4))
+ticker4CrossUnder = ta.crossunder(str.tonumber(ema1Ticker4), str.tonumber(ema2Ticker4))
+if ticker4CrossOver
+    lastCrossTicker4.lastTime := time
+    lastCrossTicker4.upCross := true
+
+if ticker4CrossUnder
+    lastCrossTicker4.lastTime := time
+    lastCrossTicker4.upCross := false
+tickerInfo4.lastCross := lastCrossTicker4
+
+[ema1Ticker5, ema2Ticker5, closeTicker5, atrTicker5] = getTFData(tickerInfos.get(4), ticker5, ticker5TF, ticker5EMA1Length, ticker5EMA2Length)
+tickerInfo5 = tickerInfos.get(4)
+tickerInfo5.ema1 := ema1Ticker5
+tickerInfo5.ema2 := ema2Ticker5
+tickerInfo5.closeF := closeTicker5
+tickerInfo5.atrF := atrTicker5
+var lastCrossTicker5 = customCross.new()
+ticker5CrossOver = ta.crossover(str.tonumber(ema1Ticker5), str.tonumber(ema2Ticker5))
+ticker5CrossUnder = ta.crossunder(str.tonumber(ema1Ticker5), str.tonumber(ema2Ticker5))
+if ticker5CrossOver
+    lastCrossTicker5.lastTime := time
+    lastCrossTicker5.upCross := true
+
+if ticker5CrossUnder
+    lastCrossTicker5.lastTime := time
+    lastCrossTicker5.upCross := false
+tickerInfo5.lastCross := lastCrossTicker5
+
+//plot((ticker1Plot and ticker1Enabled and plotLines) ? str.tonumber(ema1Ticker1) : na, "", ticker1Color)
+//plot((ticker1Plot and ticker1Enabled and plotLines) ? str.tonumber(ema2Ticker1) : na, "", ticker1Color)
+plotshape((ticker1Plot and ticker1Enabled and plotCrosses and barstate.isconfirmed) ? (ticker1CrossOver ? close : na) : na, "", shape.circle, text = "", color = bullishColor, size = size.tiny, location = location.belowbar)
+plotshape((ticker1Plot and ticker1Enabled and plotCrosses and barstate.isconfirmed) ? (ticker1CrossUnder ? close : na) : na, "", shape.circle, text = "", color = bearishColor, size = size.tiny, location = location.abovebar)
+
+//plot((ticker2Plot and ticker2Enabled and plotLines) ? str.tonumber(ema1Ticker2) : na, "", ticker2Color)
+//plot((ticker2Plot and ticker2Enabled and plotLines) ? str.tonumber(ema2Ticker2) : na, "", ticker2Color)
+plotshape((ticker2Plot and ticker2Enabled and plotCrosses and barstate.isconfirmed) ? (ticker2CrossOver ? close : na) : na, "", shape.circle, text = "", color = bullishColor, size = size.tiny, location = location.belowbar)
+plotshape((ticker2Plot and ticker2Enabled and plotCrosses and barstate.isconfirmed) ? (ticker2CrossUnder ? close : na) : na, "", shape.circle, text = "", color = bearishColor, size = size.tiny, location = location.abovebar)
+
+//plot((ticker3Plot and ticker3Enabled and plotLines) ? str.tonumber(ema1Ticker3) : na, "", ticker3Color)
+//plot((ticker3Plot and ticker3Enabled and plotLines) ? str.tonumber(ema2Ticker3) : na, "", ticker3Color)
+plotshape((ticker3Plot and ticker3Enabled and plotCrosses and barstate.isconfirmed) ? (ticker3CrossOver ? close : na) : na, "", shape.circle, text = "", color = bullishColor, size = size.tiny, location = location.belowbar)
+plotshape((ticker3Plot and ticker3Enabled and plotCrosses and barstate.isconfirmed) ? (ticker3CrossUnder ? close : na) : na, "", shape.circle, text = "", color = bearishColor, size = size.tiny, location = location.abovebar)
+
+//plot((ticker4Plot and ticker4Enabled and plotLines) ? str.tonumber(ema1Ticker4) : na, "", ticker4Color)
+//plot((ticker4Plot and ticker4Enabled and plotLines) ? str.tonumber(ema2Ticker4) : na, "", ticker4Color)
+plotshape((ticker4Plot and ticker4Enabled and plotCrosses and barstate.isconfirmed) ? (ticker4CrossOver ? close : na) : na, "", shape.circle, text = "", color = bullishColor, size = size.tiny, location = location.belowbar)
+plotshape((ticker4Plot and ticker4Enabled and plotCrosses and barstate.isconfirmed) ? (ticker4CrossUnder ? close : na) : na, "", shape.circle, text = "", color = bearishColor, size = size.tiny, location = location.abovebar)
+
+//plot((ticker5Plot and ticker5Enabled and plotLines) ? str.tonumber(ema1Ticker5) : na, "", ticker5Color)
+//plot((ticker5Plot and ticker5Enabled and plotLines) ? str.tonumber(ema2Ticker5) : na, "", ticker5Color)
+plotshape((ticker5Plot and ticker5Enabled and plotCrosses and barstate.isconfirmed) ? (ticker5CrossOver ? close : na) : na, "", shape.circle, text = "", color = bullishColor, size = size.tiny, location = location.belowbar)
+plotshape((ticker5Plot and ticker5Enabled and plotCrosses and barstate.isconfirmed) ? (ticker5CrossUnder ? close : na) : na, "", shape.circle, text = "", color = bearishColor, size = size.tiny, location = location.abovebar)
+
+if barstate.isconfirmed
+    if ticker1CrossOver
+        label.new(bar_index, close, str.tostring(ticker1EMA1Length) + " + " + str.tostring(ticker1EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker1TF) * 1000), style = label.style_label_down, size = size.normal, yloc = yloc.belowbar, textcolor = bullishColor, color=color.rgb(0, 0, 0, 100))
+
+    if ticker1CrossUnder
+        label.new(bar_index, close, str.tostring(ticker1EMA1Length) + " + " + str.tostring(ticker1EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker1TF) * 1000), style = label.style_label_up, size = size.normal, yloc = yloc.abovebar, textcolor = bearishColor, color=color.rgb(0, 0, 0, 100))
+    
+    if ticker2CrossOver
+        label.new(bar_index, close, str.tostring(ticker2EMA1Length) + " + " + str.tostring(ticker2EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker2TF) * 1000), style = label.style_label_down, size = size.normal, yloc = yloc.belowbar, textcolor = bullishColor, color=color.rgb(0, 0, 0, 100))
+
+    if ticker2CrossUnder
+        label.new(bar_index, close, str.tostring(ticker2EMA1Length) + " + " + str.tostring(ticker2EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker2TF) * 1000), style = label.style_label_up, size = size.normal, yloc = yloc.abovebar, textcolor = bearishColor, color=color.rgb(0, 0, 0, 100))
+    
+    if ticker3CrossOver
+        label.new(bar_index, close, str.tostring(ticker3EMA1Length) + " + " + str.tostring(ticker3EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker3TF) * 1000), style = label.style_label_down, size = size.normal, yloc = yloc.belowbar, textcolor = bullishColor, color=color.rgb(0, 0, 0, 100))
+
+    if ticker3CrossUnder
+        label.new(bar_index, close, str.tostring(ticker3EMA1Length) + " + " + str.tostring(ticker3EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker3TF) * 1000), style = label.style_label_up, size = size.normal, yloc = yloc.abovebar, textcolor = bearishColor, color=color.rgb(0, 0, 0, 100))
+    
+    if ticker4CrossOver
+        label.new(bar_index, close, str.tostring(ticker4EMA1Length) + " + " + str.tostring(ticker4EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker4TF) * 1000), style = label.style_label_down, size = size.normal, yloc = yloc.belowbar, textcolor = bullishColor, color=color.rgb(0, 0, 0, 100))
+
+    if ticker4CrossUnder
+        label.new(bar_index, close, str.tostring(ticker4EMA1Length) + " + " + str.tostring(ticker4EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker4TF) * 1000), style = label.style_label_up, size = size.normal, yloc = yloc.abovebar, textcolor = bearishColor, color=color.rgb(0, 0, 0, 100))
+    
+    if ticker5CrossOver
+        label.new(bar_index, close, str.tostring(ticker5EMA1Length) + " + " + str.tostring(ticker5EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker5TF) * 1000), style = label.style_label_down, size = size.normal, yloc = yloc.belowbar, textcolor = bullishColor, color=color.rgb(0, 0, 0, 100))
+
+    if ticker5CrossUnder
+        label.new(bar_index, close, str.tostring(ticker5EMA1Length) + " + " + str.tostring(ticker5EMA2Length) + "\n" + convertTimeToStrCompact(timeframe.in_seconds(ticker5TF) * 1000), style = label.style_label_up, size = size.normal, yloc = yloc.abovebar, textcolor = bearishColor, color=color.rgb(0, 0, 0, 100))
+
+handleDashboard () =>
+    // Header
+    colIndex = 0
+    EMA1Start = 0
+    EMA2Start = 0
+    crossStart = 0
+    
+    table.cell(screener, 0, 0, "EMA Cross Dashboard | Flux Charts", text_color = textColor, bgcolor = screenerColor)
+
+    // Legend
+
+    table.cell(screener, colIndex, 1, "Timeframe", text_color = textColor, bgcolor = screenerColor)
+    colIndex += 1
+
+    if true
+        EMA1Start := colIndex
+        table.cell(screener, EMA1Start, 1, "EMA 1", text_color = textColor, bgcolor = screenerColor)
+        colIndex += 1
+
+        EMA2Start := colIndex
+        table.cell(screener, EMA2Start, 1, "EMA 2", text_color = textColor, bgcolor = screenerColor)
+        colIndex += 1
+
+        crossStart := colIndex
+        table.cell(screener, crossStart, 1, "Cross", text_color = textColor, bgcolor = screenerColor)
+        colIndex += 1
+
+    table.merge_cells(screener, 0, 0, colIndex - 1, 0)
+
+    // Tickers
+    tickerStart = 2
+    i = 0
+    for a = 0 to tickerInfos.size() - 1
+        curTickerInfo = tickerInfos.get(a)
+        if curTickerInfo.isEnabled == false
+            continue
+
+        // Dashboard
+        table.cell(screener, 0, tickerStart + i, str.tostring(formatTimeframeString(curTickerInfo.timeframeStr)) + " 🕒", text_color = textColor, bgcolor = screenerColor)
+
+        if true
+            priceDiff = (str.tonumber(curTickerInfo.ema1) > str.tonumber(curTickerInfo.ema2) ? ">" : str.tonumber(curTickerInfo.ema1) < str.tonumber(curTickerInfo.ema2) ? "<" : "=")
+            bgColor = screenerColor
+            if fillBackgrounds
+                bgColor := (priceDiff == ">" ? bullishColor : priceDiff == "<" ? bearishColor : screenerColor)
+            table.cell(screener, EMA1Start, tickerStart + i, str.tostring(curTickerInfo.length1), text_color = textColor, bgcolor = bgColor)
+            table.cell(screener, EMA2Start, tickerStart + i, str.tostring(curTickerInfo.length2), text_color = textColor, bgcolor = bgColor)
+
+            crossText = "None"
+            if not na(curTickerInfo.lastCross)
+                crossText := curTickerInfo.lastCross.upCross ? "" : ""
+                timeText = convertTimeToStr(time - curTickerInfo.lastCross.lastTime) + " Ago"
+                if timeText == "0 Min Ago"
+                    timeText := "Now"
+                if timeText == "NaN Min Ago"
+                    timeText := "None"
+                //crossText += " " + timeText
+                crossText := timeText
+            table.cell(screener, crossStart, tickerStart + i, crossText, text_color = textColor, bgcolor = bgColor)
+        i += 1
+
+if displayDashboard
+    handleDashboard()

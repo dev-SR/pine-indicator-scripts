@@ -1,0 +1,1217 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © 3DOTS
+//Usage : Only Wait for an order block confirmation.
+
+//@version=5
+indicator("TOTOOLI X11 (by 3DOTS)" , shorttitle = "This is Totooli for professional usage",overlay = false)
+
+
+greencolor = #2DD204
+redcolor = #D2042D
+
+lightgreencolor = #96E881 
+lightredcolor =  #DF4F6C
+
+darkGreenColor =  #1B7E02 
+darkRedColor = #93021F
+
+kpoDeviations = input.float(2.0, "Deviations", group= "Basic Settings") // Kase peak oscillator deviations
+kpoShortCycle = input.int(8, "Short Cycle Period", group= "Basic Settings") // Kase peak oscillator short cycle
+kpoLongCycle = input.int(65, "Long Cycle Period", group= "Basic Settings") // Kase peak oscillator long cycle
+kpoSensitivity = input.float(40, "Sensitivity", group= "Basic Settings") // Kase peak oscillator sensitivity
+allPeaksMode = input.bool(true, "Show all peaks?", group= "Basic Settings") // Show all peaks?
+
+colorbars = input.bool(false, "Color bars?", group= "UI Options")
+mutebars = input.bool(false, "Mute bars?", group= "UI Options")
+
+lbR = input(title="Pivot Lookback Right", defval=5, group = "Divergences Settings")
+lbL = input(title="Pivot Lookback Left", defval=5, group = "Divergences Settings")
+rangeUpper = input(title="Max of Lookback Range", defval=60, group = "Divergences Settings")
+rangeLower = input(title="Min of Lookback Range", defval=5, group = "Divergences Settings")
+plotBull = input(title="Plot Bullish", defval=true, group = "Divergences Settings")
+plotHiddenBull = input(title="Plot Hidden Bullish", defval=false, group = "Divergences Settings")
+plotBear = input(title="Plot Bearish", defval=true, group = "Divergences Settings")
+plotHiddenBear = input(title="Plot Hidden Bearish", defval=false, group = "Divergences Settings")
+bearColor = darkRedColor
+bullColor = darkGreenColor
+hiddenBullColor = color.new(darkGreenColor, 80)
+hiddenBearColor = color.new(darkRedColor, 80)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+x1 = 0.
+xs = 0.
+
+x1 := nz(x1[1])
+xs := nz(xs[1])
+
+ccLog = math.log(close / nz(close[1]))
+ccDev = ta.stdev(ccLog, 9)
+avg = ta.sma(ccDev, 30)
+
+
+max1 = 0.
+maxs = 0.
+
+for k = kpoShortCycle to kpoLongCycle - 1
+    max1 := math.max(math.log(high / nz(low[k])) / math.sqrt(k), max1)
+    maxs := math.max(math.log(nz(high[k]) / low) / math.sqrt(k), maxs)
+    
+x1 := max1 / avg
+xs := maxs / avg
+
+xp = kpoSensitivity * (ta.sma(x1, 3) - ta.sma(xs, 3))
+xpAbs = math.abs(xp)
+
+kppBuffer  = 0.
+kpoBuffer = xp
+kphBuffer = xp
+
+tmpVal = ta.sma(xpAbs, 50) + kpoDeviations * (ta.stdev(xpAbs, 50))
+maxVal = math.max(90.0, tmpVal)
+minVal = math.min(90.0, tmpVal)
+
+kpdBuffer = 0.
+kpmBuffer = 0.
+
+if kpoBuffer > 0.
+    kpdBuffer := maxVal
+    kpmBuffer := minVal
+else 
+    kpdBuffer := -maxVal
+    kpmBuffer := -minVal
+
+if (not allPeaksMode)
+    if (nz(kpoBuffer[1]) > 0 and nz(kpoBuffer[1]) > kpoBuffer and nz(kpoBuffer[1]) >= nz(kpoBuffer[2]) and nz(kpoBuffer[1]) >= maxVal) 
+        kppBuffer := kpoBuffer
+    if (nz(kpoBuffer[1]) < 0 and nz(kpoBuffer[1]) < kpoBuffer and nz(kpoBuffer[1]) <= nz(kpoBuffer[2]) and nz(kpoBuffer[1]) <= -maxVal) 
+        kppBuffer := kpoBuffer
+else 
+    if (nz(kpoBuffer[1]) > 0 and nz(kpoBuffer[1]) > kpoBuffer and nz(kpoBuffer[1]) >= nz(kpoBuffer[2])) 
+        kppBuffer := kpoBuffer
+    if (nz(kpoBuffer[1]) < 0 and nz(kpoBuffer[1]) < kpoBuffer and nz(kpoBuffer[1]) <= nz(kpoBuffer[2])) 
+        kppBuffer := kpoBuffer
+        
+plot(kpoBuffer, "Kase Peak Oscillator", color = color.gray)
+plot(kphBuffer, "Kase Peak Oscillator Histogram", color = color.gray, style=plot.style_histogram)
+plot(kpdBuffer, "Max Peak Value", color = color.blue, linewidth = 1) //Blue Kpeak-Min line is a maximum of two standard deviations of the PeakOscillator value.
+//plot(kpmBuffer, "Min Peak Value", color = color.white, linewidth = 1) //Red PeakOut line is a minimum of two standard deviations of the PeakOscillator value
+
+colorout = kppBuffer ? kppBuffer > 0 ? redcolor : greencolor : mutebars ? color.gray : na
+
+plot(kppBuffer, "Market Extreme", color = kppBuffer ? colorout : na, style = plot.style_histogram, linewidth = 3)
+
+barcolor(colorbars ? colorout : na)
+
+osc = kpoBuffer
+
+plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
+_inRange(cond) =>
+	bars = ta.barssince(cond == true)
+	rangeLower <= bars and bars <= rangeUpper
+
+//------------------------------------------------------------------------------
+// Regular Bullish
+// Osc: Higher Low
+
+oscHL = osc[lbR] > ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Lower Low
+
+priceLL = low[lbR] < ta.valuewhen(plFound, low[lbR], 1)
+bullCond = plotBull and priceLL and oscHL and plFound
+
+plot(
+     plFound ? osc[lbR] : na,
+     offset=-lbR,
+     title="Regular Bullish",
+     linewidth=2,
+     color=(bullCond ? bullColor : noneColor)
+     )
+
+plotshape(
+	 bullCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bullish Label",
+	 text="R",
+	 style=shape.labelup,
+	 location=location.absolute,
+	 color=bullColor,
+	 textcolor=textColor
+	 )
+
+//------------------------------------------------------------------------------
+// Hidden Bullish
+// Osc: Lower Low
+
+oscLL = osc[lbR] < ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Higher Low
+
+priceHL = low[lbR] > ta.valuewhen(plFound, low[lbR], 1)
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound
+
+plot(
+	 plFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bullish",
+	 linewidth=2,
+	 color=(hiddenBullCond ? hiddenBullColor : noneColor)
+	 )
+
+plotshape(
+	 hiddenBullCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bullish Label",
+	 text="H",
+	 style=shape.labelup,
+	 location=location.absolute,
+	 color=bullColor,
+	 textcolor=textColor
+	 )
+
+//------------------------------------------------------------------------------
+// Regular Bearish
+// Osc: Lower High
+
+oscLH = osc[lbR] < ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Higher High
+
+priceHH = high[lbR] > ta.valuewhen(phFound, high[lbR], 1)
+
+bearCond = plotBear and priceHH and oscLH and phFound
+
+plot(
+	 phFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bearish",
+	 linewidth=2,
+	 color=(bearCond ? bearColor : noneColor)
+	 )
+
+plotshape(
+	 bearCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Regular Bearish Label",
+	 text="R",
+	 style=shape.labeldown,
+	 location=location.absolute,
+	 color=bearColor,
+	 textcolor=textColor
+	 )
+
+//------------------------------------------------------------------------------
+// Hidden Bearish
+// Osc: Higher High
+
+oscHH = osc[lbR] > ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Lower High
+
+priceLH = high[lbR] < ta.valuewhen(phFound, high[lbR], 1)
+
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound
+
+plot(
+	 phFound ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bearish",
+	 linewidth=2,
+	 color=(hiddenBearCond ? hiddenBearColor : noneColor)
+	 )
+
+plotshape(
+	 hiddenBearCond ? osc[lbR] : na,
+	 offset=-lbR,
+	 title="Hidden Bearish Label",
+	 text="H",
+	 style=shape.labeldown,
+	 location=location.absolute,
+	 color=bearColor,
+	 textcolor=textColor
+	 )
+	 
+	 
+goLong = kppBuffer < 0 
+goShort = kppBuffer > 0 
+
+
+alertcondition(goLong, title="Long", message="Kase Peak Oscillator w/ Divergences [Loxx]: Long\nSymbol: {{ticker}}\nPrice: {{close}}")
+alertcondition(goShort, title="Short", message="Kase Peak Oscillator w/ Divergences [Loxx]: Short\nSymbol: {{ticker}}\nPrice: {{close}}")
+
+alertcondition(hiddenBearCond, title="Hidden Bear Divergence", message="Kase Peak Oscillator w/ Divergences [Loxx]: Hidden Bear Divergence\nSymbol: {{ticker}}\nPrice: {{close}}")
+alertcondition(bearCond, title="Regular Bear Divergence", message="Kase Peak Oscillator w/ Divergences [Loxx]: Regular Bear Divergence\nSymbol: {{ticker}}\nPrice: {{close}}")
+alertcondition(hiddenBullCond, title="Hidden Bull Divergence", message="Kase Peak Oscillator w/ Divergences [Loxx]: Hidden Bull Divergence\nSymbol: {{ticker}}\nPrice: {{close}}")
+alertcondition(bullCond, title="Regular Bull Divergence", message="Kase Peak Oscillator w/ Divergences [Loxx]: Regular Bull Divergence\nSymbol: {{ticker}}\nPrice: {{close}}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//********************************
+
+
+
+
+var string GP3 = "Power 3 Visual"
+i_label_toggle = input.bool(defval=true, title="", group=GP3, inline="labels")
+i_label_text_color = input.color(defval=color.rgb(255, 255, 255, 0), title="Display Labels", group=GP3, inline="labels")
+c_tooltip_timeframe = "Switch the Power 3 Visual between the current Day or current Week"
+i_timeframe = input.timeframe(defval="W", title="Timeframe", options=["D", "W"], group=GP3, tooltip=c_tooltip_timeframe)
+i_daily_start = input.timeframe(defval="Midnight", title="Daily Start", options=["Open", "Midnight"], group=GP3, tooltip="Pick either Daily open price or Midnight EST open price")
+c_tooltip_move = "The Futures market is open 23/5. It is closed everyday for 1-hour at 5pm EST and closed over the weekends. Because this Intraday Power 3 Visual is drawing in the 'future' on the users TradingView chart, when the visual is close or in a time when the market is closed, the visual doesn't behave properly. This is because TradingView doesn't display times when the Market is closed, thus the drawings cannot be displayed during those times. There is nothing wrong with the script. Please wait until the Market is open and the visual will be drawn normally."
+i_right_movement = input.int(defval=5, minval=1, step=1, title="Visual Right Movement", group=GP3, tooltip=c_tooltip_move)
+i_line_color = input.color(defval=color.rgb(255, 255, 255, 0), title="Line Color", group=GP3) 
+i_line_width = input.int(defval=2, minval=1, maxval=20, step=1, title="Line Width", group=GP3)
+i_line_style = input.string(defval="solid (-)", title="Line Style", options=["solid (-)", "dotted (?)", "dashed (?)"], group=GP3)
+///////////////////////////////////////////////////////////////////////////////// HELPER FUNCTIONS
+// Function the converts string inputs to line style code
+line_style_function(input_var) =>
+    switch input_var
+        "dotted (?)" => line.style_dotted
+        "dashed (?)" => line.style_dashed
+        => line.style_solid
+///////////////////////////////////////////////////////////////////////////////// TIMEFRAME
+timeframe_high = request.security(syminfo.tickerid, i_timeframe, high)
+timeframe_low = request.security(syminfo.tickerid, i_timeframe, low)
+timeframe_open_req = request.security(syminfo.tickerid, i_timeframe, open)
+timeframe_close = request.security(syminfo.tickerid, i_timeframe, close)
+// Logic for midnight est open or daily open 
+// Time variables
+midnight_window = (hour(time, "America/New_York") == 0) and (minute(time) == 0)
+midnight_timespan_est = time(timeframe.period, '0001-1659', "America/New_York")
+var float midnight_open = na
+var float timeframe_open = na
+if i_timeframe == "W"
+    timeframe_open := timeframe_open_req
+else
+    // Timeframe set to daily
+    
+    if i_daily_start == "Open"
+        timeframe_open := timeframe_open_req
+    else
+    
+        // Get price at midnight open EST
+        if midnight_window
+            midnight_open := open
+        
+        // If time is after midnight est then use midnight price, if price before midnight price then use daily open price
+        if midnight_timespan_est
+            timeframe_open := midnight_open
+        else
+            timeframe_open := timeframe_open_req
+///////////////////////////////////////////////////////////////////////////////// BULL & BEAR VARIABLES
+var float manipulation_value = na
+var float distribution_value = na
+range_explansion_value = (timeframe_open + timeframe_close) / 2
+// Sets values based on whether daily/weekly range is bear or bull direction
+if timeframe_open > timeframe_close
+    // Bearish candle
+    manipulation_value := (timeframe_open + timeframe_high) / 2
+    distribution_value := (timeframe_close + timeframe_low) / 2
+else
+    // Bullish candle
+    manipulation_value := (timeframe_open + timeframe_low) / 2
+    distribution_value := (timeframe_close + timeframe_high) / 2
+///////////////////////////////////////////////////////////////////////////////// POWER 3 VISUAL
+// Move timebased labels right
+dt = time + i_right_movement * (time - time[1])
+dt_current = time + (i_right_movement * 2) * (time - time[1])
+// Visual line style
+line_style_power3 = line_style_function(i_line_style)
+// Set defaults for all lines and labels
+var line line_vertical = na
+var line line_power3_open = na
+var line line_power3_current = na
+var label label_range_expansion = na
+var label label_accumulation = na
+var label label_manipulation = na
+var label label_distribution = na
+// Saves TradingView resources by only drawing the visual once
+if timeframe.isintraday and barstate.islast
+    // Draw Power 3 lines
+    
+    // Vertical line
+    line_vertical := line.new(x1=dt, y1=timeframe_high, x2=dt, y2=timeframe_low, xloc=xloc.bar_time, color=i_line_color, style=line_style_power3, width=i_line_width,force_overlay = true)
+    line.delete(line_vertical[1])
+    // Left horizontal line
+    line_power3_open := line.new(x1=time, y1=timeframe_open, x2=dt, y2=timeframe_open, xloc=xloc.bar_time, color=i_line_color, style=line_style_power3, width=i_line_width,force_overlay = true)
+    line.delete(line_power3_open[1])
+    // Right horizontal line
+    line_power3_current := line.new(x1=dt, y1=timeframe_close, x2=dt_current, y2=timeframe_close, xloc=xloc.bar_time, color=i_line_color, style=line_style_power3, width=i_line_width,force_overlay = true)
+    line.delete(line_power3_current[1])
+    // Toggle on/off lables
+    if i_label_toggle
+        // Place labels
+        
+        // Range Expanseion label
+        label_range_expansion := label.new(x=dt, y=range_explansion_value, text="Range Expansion", xloc=xloc.bar_time, style=label.style_none, textcolor=i_label_text_color, textalign=text.align_center, tooltip="Range Expansion is ...",force_overlay = true)
+        label.delete(label_range_expansion[1])
+        // Accumulation label
+        label_accumulation := label.new(x=dt, y=timeframe_open, text="Accumulation", xloc=xloc.bar_time, style=label.style_none, textcolor=i_label_text_color, textalign=text.align_right, tooltip="Accumulation is ...",force_overlay = true)
+        label.delete(label_accumulation[1])
+        // Manipulation label
+        label_manipulation := label.new(x=dt, y=manipulation_value, text="Manipulation", xloc=xloc.bar_time, style=label.style_none, textcolor=i_label_text_color, textalign=text.align_center, tooltip="Manipulation is ...",force_overlay = true)
+        label.delete(label_manipulation[1])
+        // Distribution label
+        label_distribution := label.new(x=dt, y=distribution_value, text="Distribution", xloc=xloc.bar_time, style=label.style_none, textcolor=i_label_text_color, textalign=text.align_center, tooltip="Distribution is ...",force_overlay = true)
+        label.delete(label_distribution[1])  
+ // RSI Settings for user
+rsiSource = input(title='RSI Source', defval=close)
+rsiLength = input(title='RSI Length', defval=7)
+rsiOverbought1 = input.int(title='RSI Overbought', defval=70, minval=50, maxval=100)
+rsiOvesold = input.int(title='RSI Oversold', defval=30, minval=1, maxval=50)
+upcol = input(defval=color.new(color.olive,100), title='Zig Zag 1 Up Color')
+dncol = input(defval=color.new(color.fuchsia,100), title='Zig Zag 1 Down Color')
+// RSI value based on inbuilt RSI
+rsiValue = ta.rsi(rsiSource, rsiLength)
+// Get the current state
+isOverbought = rsiValue >= rsiOverbought1
+isOversold = rsiValue <= rsiOvesold
+// State of the last extreme 0 for initialization, 1 = overbought, 2 = oversold
+var laststate = 0
+// Highest and Lowest prices since the last state change
+var hhh = low
+var lll = high
+// Labels
+var label labelll = na
+var label labelhh = na
+// Swing lines
+var line line_up = na
+var line line_down = na
+// We go from overbought straight to oversold  NEW DRAWINGS CREATED HERE
+if laststate == 1 and isOversold
+    lll := low
+    labelll := label.new(bar_index, high,  style=label.style_label_up, color=color.rgb(0,255,0,35), size=size.small,force_overlay = true)
+    label.set_text( labelll, "Wait for" + "\n" + "Confirmation" + "\n" + "BUY")
+    labelhh_low = label.get_x(labelhh)
+    labelhh_pos = label.get_y(labelhh)
+    line_down := line.new(bar_index, high, labelhh_low, labelhh_pos, width=2,  color = dncol,force_overlay = true)
+label.set_text(id=labelll, text="Wait for" + "\n" + "Confirmation" + "\n" + "BUY")
+// We go from oversold straight to overbought NEW DRAWINGS CREATED HERE
+if laststate == 2 and isOverbought
+    hhh := high
+    labelhh := label.new(bar_index, high,  style=label.style_label_down, color=color.rgb(255,0,98,35), size=size.small,force_overlay = true)
+    label.set_text( labelhh, "SELL" + "\n" + "Wait for" + "\n" + "Confirmation")
+    labelll_low = label.get_x(labelll)
+    labelll_pos = label.get_y(labelll)
+    line_up := line.new(bar_index, high, labelll_low, labelll_pos, width=2, color = upcol,force_overlay = true)
+// If we are overbought
+if isOverbought
+    if high >= hhh
+        hhh := high
+        label.set_x(labelhh, bar_index)
+        label.set_y(labelhh, high)
+        line.set_x1(line_up, bar_index)
+        line.set_y1(line_up, high)
+    laststate := 1
+    laststate
+// If we are oversold
+if isOversold
+    if low <= lll
+        lll := low
+        label.set_x(labelll, bar_index)
+        label.set_y(labelll, low)
+        line.set_x1(line_down, bar_index)
+        line.set_y1(line_down, low)
+    laststate := 2
+    laststate
+// If last state was overbought and we are overbought
+if laststate == 1 and isOverbought
+    if hhh <= high
+        hhh := high
+        label.set_x(labelhh, bar_index)
+        label.set_y(labelhh, high)
+        line.set_x1(line_up, bar_index)
+        line.set_y1(line_up, high)
+//If we are oversold and the last state was oversold, move the drawings to the lowest price
+if laststate == 2 and isOversold
+    if low <= lll
+        lll := low
+        label.set_x(labelll, bar_index)
+        label.set_y(labelll, low)
+        line.set_x1(line_down, bar_index)
+        line.set_y1(line_down, low)
+// If last state was overbought
+if laststate == 1
+    if hhh <= high
+        hhh := high
+        label.set_x(labelhh, bar_index)
+        label.set_y(labelhh, high)
+        line.set_x1(line_up, bar_index)
+        line.set_y1(line_up, high)
+// If last stare was oversold
+if laststate == 2
+    if lll >= low
+        lll := low
+        label.set_x(labelll, bar_index)
+        label.set_y(labelll, low)
+        line.set_x1(line_down, bar_index)
+        line.set_y1(line_down, low)
+lb = input.int(3, title='Left Bars', minval=1)
+rb = input.int(15, title='Right Bars', minval=1)
+showsupres = input.bool(true, title='Support/Resistance', inline='srcol')
+supcol = input.color(color.white, title='', inline='srcol')
+rescol = input.color(color.white, title='', inline='srcol')
+srlinestyle = input.string(line.style_dashed, title='Line Style/Width', options=[line.style_solid, line.style_dashed, line.style_dotted], inline='style')
+srlinewidth = input.int(1, title='', minval=1, maxval=5, inline='style')
+//changebarcol = input.bool(true, title='Change Bar Color', inline='bcol')
+//bcolup = input.color(color.blue, title='', inline='bcol')
+//bcoldn = input.color(color.black, title='', inline='bcol')
+phh = ta.pivothigh(lb, rb)
+pll = ta.pivotlow(lb, rb)
+iff_1 = pll ? -1 : na  // Trend direction
+hl = phh ? 1 : iff_1
+iff_2 = pll ? pll : na  // similar to zigzag but may have multiple highs/lows
+zz = phh ? phh : iff_2
+valuewhen_1 = ta.valuewhen(hl, hl, 1)
+valuewhen_2 = ta.valuewhen(zz, zz, 1)
+zz := pll and hl == -1 and valuewhen_1 == -1 and pll > valuewhen_2 ? na : zz
+valuewhen_3 = ta.valuewhen(hl, hl, 1)
+valuewhen_4 = ta.valuewhen(zz, zz, 1)
+zz := phh and hl == 1 and valuewhen_3 == 1 and phh < valuewhen_4 ? na : zz
+valuewhen_5 = ta.valuewhen(hl, hl, 1)
+valuewhen_6 = ta.valuewhen(zz, zz, 1)
+hl := hl == -1 and valuewhen_5 == 1 and zz > valuewhen_6 ? na : hl
+valuewhen_7 = ta.valuewhen(hl, hl, 1)
+valuewhen_8 = ta.valuewhen(zz, zz, 1)
+hl := hl == 1 and valuewhen_7 == -1 and zz < valuewhen_8 ? na : hl
+zz := na(hl) ? na : zz
+findprevious() =>  // finds previous three points (b, c, d, e)
+    ehl = hl == 1 ? -1 : 1
+    loc1 = 0.0
+    loc2 = 0.0
+    loc3 = 0.0
+    loc4 = 0.0
+    xx = 0
+    for x = 1 to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc1 := zz[x]
+            xx := x + 1
+            break
+    ehl := hl
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc2 := zz[x]
+            xx := x + 1
+            break
+    ehl := hl == 1 ? -1 : 1
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc3 := zz[x]
+            xx := x + 1
+            break
+    ehl := hl
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc4 := zz[x]
+            break
+    [loc1, loc2, loc3, loc4]
+float aa = na
+float bb = na
+float w = na
+float dd = na
+float e = na
+if not na(hl)
+    [loc1, loc2, loc3, loc4] = findprevious()
+    aa := zz
+    bb := loc1
+    w := loc2
+    dd := loc3
+    e := loc4
+    e
+_hh = zz and aa > bb and aa > w and w > bb and w > dd
+_ll = zz and aa < bb and aa < w and w < bb and w < dd
+_hl = zz and (aa >= w and bb > w and bb > dd and dd > w and dd > e or aa < bb and aa > w and bb < dd)
+_lh = zz and (aa <= w and bb < w and bb < dd and dd < w and dd < e or aa > bb and aa < w and bb > dd)
+plotshape(_hl, text='HL', title='Higher Low', style=shape.labelup, color=color.new(color.white, 0), textcolor=color.new(color.black, 0), location=location.belowbar, offset=-rb,force_overlay = true)
+//plotshape(_hh, text='HH', title='Higher High', style=shape.labeldown, color=color.new(color.aqua, 0), textcolor=color.new(color.black, 0), location=location.abovebar, offset=-rb)
+//plotshape(_ll, text='LL', title='Lower Low', style=shape.labelup, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), location=location.belowbar, offset=-rb)
+plotshape(_lh, text='LH', title='Lower High', style=shape.labeldown, color=color.new(color.white, 0), textcolor=color.new(color.black, 0), location=location.abovebar, offset=-rb,force_overlay = true)
+float res1 = na
+float sup = na
+res1 := _lh ? zz : res1[1]
+sup := _hl ? zz : sup[1]
+int trend = na
+iff_3 = close < sup ? -1 : nz(trend[1])
+trend := close > res1 ? 1 : iff_3
+res1 := trend == 1 and _hh or trend == -1 and _lh ? zz : res1
+sup := trend == 1 and _hl or trend == -1 and _ll ? zz : sup
+rechange = res1 != res1[1]
+suchange = sup != sup[1]
+var line resline = na
+var line supline = na
+if showsupres
+    if rechange
+        line.set_x2(resline, bar_index)
+        line.set_extend(resline, extend=extend.none)
+        resline := line.new(x1=bar_index - rb, y1=res1, x2=bar_index, y2=res1, color=rescol, extend=extend.right, style=srlinestyle, width=srlinewidth,force_overlay = true)
+        resline
+    if suchange
+        line.set_x2(supline, bar_index)
+        line.set_extend(supline, extend=extend.none)
+        supline := line.new(x1=bar_index - rb, y1=sup, x2=bar_index, y2=sup, color=supcol, extend=extend.right, style=srlinestyle, width=srlinewidth,force_overlay = true)
+        supline
+//iff_4 = trend == 1 ? bcolup : bcoldn
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//
+CRAK1 = input.int(13, step=10)
+CRAK2 = input.int(17, step=10)
+CRAK3 = input.int(110, step=10)
+CRAK4 = input.int(109, step=10)
+CRAK5 = input.int(103, step=10)
+CRAK6 = input.int(1, step=10)
+CRAK7 = input.int(1, step=10)
+CRAK8 = input.int(9, step=10) 
+CRAK9 = input.int(11, step=10)
+CRAK10 = input.int(120, step=10)
+CRAK11 = input.int(200, step=10)
+CRAK12 = input.int(200, step=10)
+CRAK13 = input.int(110, step=10)
+CRAK14 = input.int(11, step=10)
+CRAK15 = input.int(12, step=10)
+CRAK16 = input.int(2, step=10)
+CRAK17 = input.int(1, step=10)
+CRAK18 = input.int(2, step=10)
+CRAK19 = input.int(1, step=10)
+CRAK20 = input.int(2, step=10)
+///
+DETECT3 = input.int(18, step=10)
+PATTERN1 = input(true)
+PATTERN10 = input.int(18, step=5, minval=1)
+COLORP1 = input(color.rgb(43, 52, 146, 55))
+zigzag1Width = 1
+zigzag1Style = line.style_dotted
+ 
+PATTERN2 = input(true)
+PATTERN20 = input.int(24, step=5, minval=1)
+COLORP2 = input(color.rgb(43, 52, 146, 55))
+zigzag2Width = 1
+zigzag2Style = line.style_dotted
+ 
+PATTERN3 = input(true)
+PATTERN30 = input.int(32, step=5, minval=1)
+COLORP3 = input(color.rgb(43, 52, 146, 55))
+zigzag3Width = 1
+zigzag3Style = line.style_dotted
+ 
+PATTERN4 = input(true)
+PATTERN40 = input.int(38, step=5, minval=1)
+COLORP4 = input(color.rgb(43, 52, 146, 55))
+zigzag4Width = 1
+zigzag4Style = line.style_dotted
+
+P11 = input(true)
+P22 = input(true)
+P33 = input(true)
+P44 = input(true)
+P55 = input(true)
+P66 = input(true)
+DETECTM = input.int(18, minval=5, step=5, maxval=200)
+//
+DATAC = input.int(350, step=10)
+DATAC2 = input.int(400, step=10)
+//
+MaxRiskPerReward = input.int(29, title='DETECT/PER', step=10, minval=0)
+//
+
+//
+E1 = input.int(370, step=10)
+E2 = input.int(390, step=10)
+showStatTable = false
+CANCLE_PATTERNS = input(false)
+//
+CRAKD90 = input.int(200, step=10)
+CRAKFALSE200 = input.int(200, step=10)
+CRAKFALSE100 = input.int(300, step=10)
+///
+BULL_PATTERNS = input(color.silver)
+BEAR_PATTERNS = input(color.blue)
+
+err_min = (100 - DETECTM) / 100
+err_max = (100 + DETECTM) / 100
+
+var zigzagpivots1 = array.new_float(0)
+var zigzagpivotbars1 = array.new_int(0)
+var zigzagpivotdirs1 = array.new_int(0)
+
+var zigzagpivots2 = array.new_float(0)
+var zigzagpivotbars2 = array.new_int(0)
+var zigzagpivotdirs2 = array.new_int(0)
+
+var zigzagpivots3 = array.new_float(0)
+var zigzagpivotbars3 = array.new_int(0)
+var zigzagpivotdirs3 = array.new_int(0)
+
+var zigzagpivots4 = array.new_float(0)
+var zigzagpivotbars4 = array.new_int(0)
+var zigzagpivotdirs4 = array.new_int(0)
+
+var wmlines1 = array.new_line(8)
+var wmtype1 = array.new_int(2, 1)
+var wmLabels1 = array.new_bool(13, false)
+var wmLabel1 = array.new_label(1)
+
+var wmlines2 = array.new_line(8)
+var wmtype2 = array.new_int(2, 1)
+var wmLabels2 = array.new_bool(13, false)
+var wmLabel2 = array.new_label(1)
+
+var wmlines3 = array.new_line(8)
+var wmtype3 = array.new_int(2, 1)
+var wmLabels3 = array.new_bool(13, false)
+var wmLabel3 = array.new_label(1)
+
+var wmlines4 = array.new_line(8)
+var wmtype4 = array.new_int(2, 1)
+var wmLabels4 = array.new_bool(13, false)
+var wmLabel4 = array.new_label(1)
+
+pivots(length) =>
+    float phigh = ta.highestbars(high, length) == 0 ? high : na
+    float plow = ta.lowestbars(low, length) == 0 ? low : na
+    dir = 0
+    iff_1 = plow and na(phigh) ? -1 : dir[1]
+    dir := phigh and na(plow) ? 1 : iff_1
+    [dir, phigh, plow]
+
+zigzag(length, zigzagpivots, zigzagpivotbars, zigzagpivotdirs) =>
+    [dir, phigh, plow] = pivots(length)
+    dirchanged = ta.change(dir)
+
+    if phigh or plow
+        value = dir == 1 ? phigh : plow
+        bar = bar_index
+        newDir = dir
+        if not dirchanged and array.size(zigzagpivots) >= 1
+            pivot = array.shift(zigzagpivots)
+            pivotbar = array.shift(zigzagpivotbars)
+            pivotdir = array.shift(zigzagpivotdirs)
+            useNewValues = value * pivotdir < pivot * pivotdir
+            value := useNewValues ? pivot : value
+            bar := useNewValues ? pivotbar : bar
+            bar
+
+        if array.size(zigzagpivots) >= 2
+            LastPoint = array.get(zigzagpivots, 1)
+            newDir := dir * value > dir * LastPoint ? dir * 2 : dir
+            newDir
+
+        array.unshift(zigzagpivots, value=value)
+        array.unshift(zigzagpivotbars, bar)
+        array.unshift(zigzagpivotdirs, newDir)
+
+        if array.size(zigzagpivots) > DETECT3
+            array.pop(zigzagpivots)
+            array.pop(zigzagpivotbars)
+            array.pop(zigzagpivotdirs)
+
+get_harmonic_label(wmLabels, dir, price, bar) =>
+    isP11 = array.get(wmLabels, 0)
+    isP22 = array.get(wmLabels, 1)
+    isP33 = array.get(wmLabels, 2)
+    isP44 = array.get(wmLabels, 3)
+    isP55 = array.get(wmLabels, 4)
+    isP66 = array.get(wmLabels, 5)
+
+    labelText = isP11 ? 'Gartley' : ''
+    labelText := labelText + (isP22 ? (labelText == '' ? '' : '\n') + 'Crab' : '')
+    labelText := labelText + (isP33 ? (labelText == '' ? '' : '\n') + 'Deep Crab' : '')
+    labelText := labelText + (isP44 ? (labelText == '' ? '' : '\n') + 'Bat' : '')
+    labelText := labelText + (isP55 ? (labelText == '' ? '' : '\n') + 'Butterfly' : '')
+    labelText := labelText + (isP66 ? (labelText == '' ? '' : '\n') + 'Shark' : '')
+    
+
+    trendColor = dir > 0 ? BULL_PATTERNS : BEAR_PATTERNS
+
+    baseLabel = label.new(x=bar, y=price, text=labelText, yloc=yloc.price, color=trendColor, style=dir < 1 ? label.style_label_down : label.style_label_up, textcolor=color.black, size=size.normal,force_overlay = true)
+    //baseLabel
+
+detect_harmonic_pattern(zigzagpivots, zigzagpivotbars, zigzagpivotdirs, wmlines, wmlabel, wmtype, wmLabels, zigzagColor, zigzagWidth, zigzagStyle, showZigZag) =>
+    start = CANCLE_PATTERNS ? 1 : 0
+    wm_pattern = false
+    abcd_pattern = false
+    double_pattern = false
+    if array.size(zigzagpivots) >= 6 + start and showZigZag
+
+        d = array.get(zigzagpivots, start + 0)
+        dBar = array.get(zigzagpivotbars, start + 0)
+        dDir = array.get(zigzagpivotdirs, start + 0)
+
+        c = array.get(zigzagpivots, start + 1)
+        cBar = array.get(zigzagpivotbars, start + 1)
+        cDir = array.get(zigzagpivotdirs, start + 1)
+
+        b = array.get(zigzagpivots, start + 2)
+        bBar = array.get(zigzagpivotbars, start + 2)
+        bDir = array.get(zigzagpivotdirs, start + 2)
+
+        a = array.get(zigzagpivots, start + 3)
+        aBar = array.get(zigzagpivotbars, start + 3)
+        aDir = array.get(zigzagpivotdirs, start + 3)
+
+        x = array.get(zigzagpivots, start + 4)
+        xBar = array.get(zigzagpivotbars, start + 4)
+        xDir = array.get(zigzagpivotdirs, start + 4)
+
+        y = array.get(zigzagpivots, start + 5)
+        yBar = array.get(zigzagpivotbars, start + 5)
+        yDir = array.get(zigzagpivotdirs, start + 5)
+
+        highPoint = math.max(x, a, b, c, d)
+        lowPoint = math.min(x, a, b, c, d)
+        dir = c > d ? 1 : -1
+
+        xabRatio = math.abs(b - a) / math.abs(x - a)
+        abcRatio = math.abs(c - b) / math.abs(a - b)
+        bcdRatio = math.abs(d - c) / math.abs(b - c)
+        xadRatio = math.abs(d - a) / math.abs(x - a)
+        yxaRatio = math.abs(a - x) / math.abs(y - x)
+
+        abTime = math.abs(aBar - bBar)
+        cdTime = math.abs(cBar - dBar)
+        abPrice = math.abs(a - b)
+        cdPrice = math.abs(c - d)
+
+        time_ratio = cdTime / abTime
+        price_ratio = cdPrice / abPrice
+        abcdDirection = a < b and a < c and c < b and c < d and a < d and b < d ? 1 : a > b and a > c and c > b and c > d and a > d and b > d ? -1 : 0
+
+        risk = math.abs(b - d)
+        reward = math.abs(c - d)
+        riskPerReward = risk * 100 / (risk + reward)
+
+        if b < highPoint and b > lowPoint
+            //gartley
+            if P11 and xabRatio >= 0.588 * err_min and xabRatio <= 0.648 * err_max and abcRatio >= 0.382 * err_min and abcRatio <= 0.886 * err_max and xadRatio >= 0.786 * err_min and xadRatio <= 0.886 * err_max
+                wm_pattern := true
+                array.set(wmLabels, 0, true)
+            else
+                array.set(wmLabels, 0, false)
+            //Crab
+            if P22 and  xabRatio >= 0.382 * err_min and xabRatio <= 0.618 * err_max and abcRatio >= 0.382 * err_min and abcRatio <= 0.886 * err_max and xadRatio >= 1.618 * err_min and xadRatio <= 1.902 * err_max
+                wm_pattern := true
+                array.set(wmLabels, 1, true)
+            else
+                array.set(wmLabels, 1, false)
+            //Deep Crab
+            if P33  and xabRatio >= 0.886 * err_min and xabRatio <= 0.936 * err_max and abcRatio >= 0.382 * err_min and abcRatio <= 0.886 * err_max and xadRatio >= 1.618 * err_min and xadRatio <= 1.902 * err_max
+                wm_pattern := true
+                array.set(wmLabels, 2, true)
+            else
+                array.set(wmLabels, 2, false)
+            //Bat
+            if P44 and xabRatio >= 0.382 * err_min and xabRatio <= 0.55 * err_max and abcRatio >= 0.382 * err_min and abcRatio <= 0.886 * err_max and xadRatio >= 0.886 * err_min and xadRatio <= 0.886 * err_max
+                wm_pattern := true
+                array.set(wmLabels, 3, true)
+            else
+                array.set(wmLabels, 3, false)
+            //Butterfly
+            if P55 and xabRatio >= 0.755 * err_min and xabRatio <= 0.816 * err_max and abcRatio >= 0.382 * err_min and abcRatio <= 0.886 * err_max and xadRatio >= 1.272 * err_min and xadRatio <= 1.272 * err_max
+                wm_pattern := true
+                array.set(wmLabels, 4, true)
+            else
+                array.set(wmLabels, 4, false)
+            //Shark
+            if P66 and xabRatio >= 0.382 * err_min and xabRatio <= 0.618 * err_max and abcRatio >= 1.13 * err_min and abcRatio <= 1.618 * err_max and xadRatio >= 0.886 * err_min and xadRatio <= 1.13 * err_max
+                wm_pattern := true
+                array.set(wmLabels, 5, true)
+            else
+                array.set(wmLabels, 5, false)
+
+        cancelW = false
+        cancelA = false
+        cancelD = false
+        if wm_pattern[1] and x == x[1] and a == a[1] and b == b[1] and c == c[1]
+            line.delete(array.get(wmlines, 0))
+            line.delete(array.get(wmlines, 1))
+            line.delete(array.get(wmlines, 2))
+            line.delete(array.get(wmlines, 3))
+            line.delete(array.get(wmlines, 4))
+            line.delete(array.get(wmlines, 5))
+            line.delete(array.get(wmlines, 6))
+            line.delete(array.get(wmlines, 7))
+            label.delete(array.get(wmlabel, 0))
+            cancelW := true
+            cancelW
+
+        if abcd_pattern[1] and a == a[1] and b == b[1] and c == c[1]
+            line.delete(array.get(wmlines, 1))
+            line.delete(array.get(wmlines, 2))
+            line.delete(array.get(wmlines, 3))
+            label.delete(array.get(wmlabel, 0))
+            cancelA := true
+            cancelA
+
+        if double_pattern[1] and a == a[1] and b == b[1] and c == c[1]
+            line.delete(array.get(wmlines, 5))
+            label.delete(array.get(wmlabel, 0))
+            cancelD := true
+            cancelD
+
+        if wm_pattern
+            xa = line.new(y1=x, y2=a, x1=xBar, x2=aBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            ab = line.new(y1=a, y2=b, x1=aBar, x2=bBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            bc = line.new(y1=b, y2=c, x1=bBar, x2=cBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            cd = line.new(y1=c, y2=d, x1=cBar, x2=dBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            xb = line.new(y1=x, y2=b, x1=xBar, x2=bBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            bd = line.new(y1=b, y2=d, x1=bBar, x2=dBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            xd = line.new(y1=x, y2=d, x1=xBar, x2=dBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            ac = line.new(y1=a, y2=c, x1=aBar, x2=cBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle,force_overlay = true)
+            array.set(wmlines, 0, xa)
+            array.set(wmlines, 1, ab)
+            array.set(wmlines, 2, bc)
+            array.set(wmlines, 3, cd)
+            array.set(wmlines, 4, xb)
+            array.set(wmlines, 5, bd)
+            array.set(wmlines, 6, xd)
+            array.set(wmlines, 7, ac)
+            array.set(wmtype, 0, dir)
+            linefill.new(xa, xb, color=color.rgb(44, 93, 136, 94))
+            linefill.new(bc, bd, color=color.rgb(44, 93, 136, 94))
+        if abcd_pattern and not wm_pattern
+            ab = line.new(y1=a, y2=b, x1=aBar, x2=bBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle)
+            bc = line.new(y1=b, y2=c, x1=bBar, x2=cBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle)
+            cd = line.new(y1=c, y2=d, x1=cBar, x2=dBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle)
+            array.set(wmlines, 1, ab)
+            array.set(wmlines, 2, bc)
+            array.set(wmlines, 3, cd)
+            array.set(wmtype, 0, dir)
+        if double_pattern and not wm_pattern
+            bd = line.new(y1=b, y2=d, x1=bBar, x2=dBar, color=zigzagColor, width=zigzagWidth, style=zigzagStyle)
+            array.set(wmlines, 5, bd)
+            array.set(wmtype, 0, dir)
+
+        if wm_pattern or abcd_pattern or double_pattern
+            array.set(wmlabel, 0, get_harmonic_label(wmLabels, dir, d, dBar))
+
+    pattern = wm_pattern and not wm_pattern[1] or abcd_pattern and not abcd_pattern[1] or double_pattern and not double_pattern[1]
+    pattern
+
+zigzag(PATTERN10, zigzagpivots1, zigzagpivotbars1, zigzagpivotdirs1)
+zigzag(PATTERN20, zigzagpivots2, zigzagpivotbars2, zigzagpivotdirs2)
+zigzag(PATTERN30, zigzagpivots3, zigzagpivotbars3, zigzagpivotdirs3)
+zigzag(PATTERN40, zigzagpivots4, zigzagpivotbars4, zigzagpivotdirs4)
+
+
+
+wm_pattern1 = detect_harmonic_pattern(zigzagpivots1, zigzagpivotbars1, zigzagpivotdirs1, wmlines1, wmLabel1, wmtype1, wmLabels1, COLORP1, zigzag1Width, zigzag1Style, PATTERN1)
+wm_pattern2 = detect_harmonic_pattern(zigzagpivots2, zigzagpivotbars2, zigzagpivotdirs2, wmlines2, wmLabel2, wmtype2, wmLabels2, COLORP2, zigzag2Width, zigzag2Style, PATTERN2)
+wm_pattern3 = detect_harmonic_pattern(zigzagpivots3, zigzagpivotbars3, zigzagpivotdirs3, wmlines3, wmLabel3, wmtype3, wmLabels3, COLORP3, zigzag3Width, zigzag3Style, PATTERN3)
+wm_pattern4 = detect_harmonic_pattern(zigzagpivots4, zigzagpivotbars4, zigzagpivotdirs4, wmlines4, wmLabel4, wmtype4, wmLabels4, COLORP4, zigzag4Width, zigzag4Style, PATTERN4)
+
+alertcondition(wm_pattern1 or wm_pattern2 or wm_pattern3 or wm_pattern4, title='Harmonic Alert', message='Harmonic Alert {{ticker}}')
+
+var stats = table.new(position=position.top_right, columns=8, rows=DETECT3 + 2, border_width=1)
+
+if barstate.islast and showStatTable
+    if PATTERN1
+        table.cell(table_id=stats, column=0, row=0, text='Zigzag ' + str.tostring(PATTERN10), bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=0, row=1, text='Price', bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=1, row=1, text='BarIndex', bgcolor=color.black, text_color=color.white)
+
+        for i = 0 to array.size(zigzagpivots1) - 1 by 1
+            bgcolor = array.get(zigzagpivotdirs1, i) == 1 ? color.lime : color.orange
+            table.cell(table_id=stats, column=0, row=i + 2, text=str.tostring(array.get(zigzagpivots1, i)), bgcolor=bgcolor)
+            table.cell(table_id=stats, column=1, row=i + 2, text=str.tostring(array.get(zigzagpivotbars2, i)), bgcolor=bgcolor)
+
+    if PATTERN2
+        table.cell(table_id=stats, column=2, row=0, text='Zigzag ' + str.tostring(PATTERN20), bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=2, row=1, text='Price', bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=3, row=1, text='BarIndex', bgcolor=color.black, text_color=color.white)
+
+        for i = 0 to array.size(zigzagpivots2) - 1 by 1
+            bgcolor = array.get(zigzagpivotdirs2, i) == 1 ? color.lime : color.orange
+            table.cell(table_id=stats, column=2, row=i + 2, text=str.tostring(array.get(zigzagpivots2, i)), bgcolor=bgcolor)
+            table.cell(table_id=stats, column=3, row=i + 2, text=str.tostring(array.get(zigzagpivotbars2, i)), bgcolor=bgcolor)
+
+    if PATTERN3
+        table.cell(table_id=stats, column=4, row=0, text='Zigzag ' + str.tostring(PATTERN30), bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=4, row=1, text='Price', bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=5, row=1, text='BarIndex', bgcolor=color.black, text_color=color.white)
+
+        for i = 0 to array.size(zigzagpivots3) - 1 by 1
+            bgcolor = array.get(zigzagpivotdirs3, i) == 1 ? color.lime : color.orange
+            table.cell(table_id=stats, column=4, row=i + 2, text=str.tostring(array.get(zigzagpivots3, i)), bgcolor=bgcolor)
+            table.cell(table_id=stats, column=5, row=i + 2, text=str.tostring(array.get(zigzagpivotbars3, i)), bgcolor=bgcolor)
+
+    if PATTERN4
+        table.cell(table_id=stats, column=6, row=0, text='Zigzag ' + str.tostring(PATTERN40), bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=6, row=1, text='Price', bgcolor=color.black, text_color=color.white)
+        table.cell(table_id=stats, column=7, row=1, text='BarIndex', bgcolor=color.black, text_color=color.white)
+
+        for i = 0 to array.size(zigzagpivots4) - 1 by 1
+            bgcolor = array.get(zigzagpivotdirs4, i) == 1 ? color.lime : color.orange
+            table.cell(table_id=stats, column=6, row=i + 2, text=str.tostring(array.get(zigzagpivots4, i)), bgcolor=bgcolor)
+            table.cell(table_id=stats, column=7, row=i + 2, text=str.tostring(array.get(zigzagpivotbars4, i)), bgcolor=bgcolor)
+
+
+
+
+/////////
+
+
+
+
+
+
+
+// functions
+get(arr, index) =>
+    index < array.size(arr) ? array.get(arr, index) : na
+
+busted(highs, lows, times, bounces) =>
+    array.shift(highs)
+    array.shift(lows)
+    array.shift(times)
+    array.shift(bounces) or true
+
+bounced(bounces) =>
+    status = array.get(bounces, 0)
+    array.set(bounces, 0, true)
+    status
+
+// A. CORE
+ceiling = math.max(high, close[1], open[1])
+floor = math.min(low, close[1], open[1])
+
+buying = close >= open and high != low
+selling = close <= open and low != high
+
+green = close > open and close > close[1]
+red = close < open and close < close[1]
+
+gapup = open > close[1]
+gapdown = open < close[1]
+
+higher = high > high[1]
+lowerf = low < low[1]
+
+bullish = green and higher
+bearish = red and lowerf
+
+// notable price actions
+bullishEngulf = selling[1] and (gapdown or lowerf) and bullish and close > open[1]
+bearishEngulf = buying[1] and (gapup or higher) and bearish and close < open[1]
+
+breakHigh = (selling[2] or selling[1]) and buying and close > ceiling[1]
+breakLow = (buying[2] or buying[1]) and selling and close < floor[1]
+
+whiteSoldiers = bearish[3] and buying[2] and bullish[1] and bullish and close > high[3]
+blackCrows = bullish[3] and selling[2] and bearish[1] and bearish and close < low[3]
+
+// pivot setups
+soaring = bullishEngulf or breakHigh or whiteSoldiers
+tumbling = bearishEngulf or breakLow or blackCrows
+
+reversal = switch
+    whiteSoldiers => not soaring[1] and not soaring[2]
+    blackCrows => not tumbling[1] and not tumbling[2]
+    breakHigh => not soaring[1] and (bearish[1] or bearish[2])
+    breakLow => not tumbling[1] and (bullish[1] or bullish[2])
+
+continuation = switch
+    breakHigh => bullish[2] and close > high[2] and not bearish[1]
+    breakLow => bearish[2] and close < low[2] and not bullish[1]
+
+engulfing = (bullishEngulf or bearishEngulf) and (higher[1] or lowerf[1])
+
+// B. PIVOT ZONES
+var buyzoneHigh = array.new_float(0)
+var buyzoneLow = array.new_float(0)
+var buyzoneTime = array.new_int(0)
+var bounceUp = array.new_bool(0)
+
+var sellzoneHigh = array.new_float(0)
+var sellzoneLow = array.new_float(0)
+var sellzoneTime = array.new_int(0)
+var bounceDown = array.new_bool(0)
+
+// 1. Broken Pivot Zones
+brokenHigh = while get(sellzoneHigh, 0) < high
+    busted(sellzoneHigh, sellzoneLow, sellzoneTime, bounceDown)
+
+brokenLow = while get(buyzoneLow, 0) > low
+    busted(buyzoneHigh, buyzoneLow, buyzoneTime, bounceUp)
+
+// 2. Distribution/Accumulation Bar and Pivot Bar
+upturn = soaring and (reversal or continuation or engulfing)
+downturn = tumbling and (reversal or continuation or engulfing)
+
+dacbar = switch
+    upturn => whiteSoldiers ? 3 : (breakHigh and selling[2] ? 2 : 1)
+    downturn => blackCrows ? 3 : (breakLow and buying[2] ? 2 : 1)
+
+pivotbar = switch
+    upturn => whiteSoldiers ? 2 : (green[1] ? 1 : 0)
+    downturn => blackCrows ? 2 : (red[1] ? 1 : 0)
+
+// 3. Pivot Zone Values
+pzHigh = float(na)
+pzLow = float(na)
+
+switch
+    upturn =>
+        // low at wick
+        pzLow := math.min(low[dacbar], low[pivotbar], low[1], low)
+        // high at wick or open
+        pzHigh := switch
+            close[pivotbar] > high[dacbar] => high[dacbar]
+            open[pivotbar] > open[dacbar] => open[pivotbar]
+            => open[dacbar]
+
+    downturn =>
+        // high at wick
+        pzHigh := math.max(high[dacbar], high[pivotbar], high[1], high)
+        // low at wick or open
+        pzLow := switch
+            close[pivotbar] < low[dacbar] => low[dacbar]
+            open[pivotbar] < open[dacbar] => open[pivotbar]
+            => open[dacbar]
+
+// 4. Overlapping Pivot Zones
+overlap = switch
+    upturn => get(buyzoneHigh, 0) >= pzLow
+    downturn => get(sellzoneLow, 0) <= pzHigh
+
+replace = switch
+    overlap and upturn => bounced(bounceUp)
+    overlap and downturn => bounced(bounceDown)
+
+// remove replaced zone or adjust overlapped zone
+switch
+    replace and upturn => busted(buyzoneHigh, buyzoneLow, buyzoneTime, bounceUp)
+    replace and downturn => busted(sellzoneHigh, sellzoneLow, sellzoneTime, bounceDown)
+    overlap and upturn => array.set(buyzoneHigh, 0, pzLow)
+    overlap and downturn => array.set(sellzoneLow, 0, pzHigh)
+
+// 5. Pivot Zones Queue
+switch
+    upturn =>
+        array.unshift(buyzoneHigh, pzHigh)
+        array.unshift(buyzoneLow, pzLow)
+        array.unshift(buyzoneTime, time[dacbar])
+        array.unshift(bounceUp, false)
+
+    downturn =>
+        array.unshift(sellzoneHigh, pzHigh)
+        array.unshift(sellzoneLow, pzLow)
+        array.unshift(sellzoneTime, time[dacbar])
+        array.unshift(bounceDown, false)
+
+// 6. Pivot Zones Markup
+maxbox(redraw) => redraw ? 22 : na
+
+newbox(bg) =>
+    box.new(0, 0, 0, 0, xloc=xloc.bar_time, border_color=color.rgb(127,127,127,50), bgcolor=bg, extend=extend.right,force_overlay = true)
+
+render(boxes, index, highs, lows, times) =>
+    ibox = get(boxes, index)
+    top = get(highs, index)
+    bottom = get(lows, index)
+    left = get(times, index)
+    overlapped = if index > 0
+        lastbox = index - 1
+        top == get(lows, lastbox) or bottom == get(highs, lastbox)
+    box.set_lefttop(ibox, left, overlapped ? na : top)
+    box.set_rightbottom(ibox, time, overlapped ? na : bottom)
+    textM=""
+    if int(top-bottom)==0
+        textM:= str.tostring(top-bottom)
+    else
+        textM := str.tostring(int(top-bottom))
+
+
+    box.set_text(ibox,"Strength of Order Block = "+ textM)
+    box.set_text_color(ibox,color.gray)
+    box.set_text_halign(ibox,text.align_left)
+    box.set_text_size(ibox,size.small)
+   
+var supply = input.color(color.rgb(253,224,110,50), 'Supply Zones')
+var demand = input.color(color.rgb(212,224,255,50), 'Demand Zones')
+
+var buyBox = array.new_box(0)
+var sellBox = array.new_box(0)
+
+for i = 0 to maxbox(na(close[1]))
+    array.push(buyBox, newbox(demand))
+    
+    array.push(sellBox, newbox(supply))
+
+for i = 0 to maxbox(upturn or brokenLow)
+    render(buyBox, i, buyzoneHigh, buyzoneLow, buyzoneTime)
+    
+
+for i = 0 to maxbox(downturn or brokenHigh)
+    render(sellBox, i, sellzoneHigh, sellzoneLow, sellzoneTime)
+    
+
+// C. ALERTS
+if brokenHigh
+    alert('Breakout', alert.freq_once_per_bar)
+    
+
+if brokenLow
+    alert('Breakdown', alert.freq_once_per_bar)
+    
+
+if upturn or downturn
+    setup = switch
+        whiteSoldiers => 'White Soldiers'
+        blackCrows => 'Black Crows'
+        breakHigh => bullishEngulf ? 'Engulf & Break High' : 'Break High'
+        breakLow => bearishEngulf ? 'Engulf & Break Low' : 'Break Low'
+        bullishEngulf => 'Bullish Engulf'
+        bearishEngulf => 'Bearish Engulf'
+    occurence = replace ? 'Replace' : (overlap ? 'Bounce' : 'Fresh')
+    message = setup + ' (' + occurence + ')'
+    alert(message, alert.freq_once_per_bar_close)
+
+
+
+
+
+
+
+
+
+
+// The code ended here TOTOOLI X11

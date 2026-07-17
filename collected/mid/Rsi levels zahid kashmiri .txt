@@ -1,0 +1,65 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bcracker7
+
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0
+// © Zahid
+
+//@version=6
+indicator("RSI Levels • Buy/Sell/TP • Zahid", shorttitle="RSI Levels Zahid", overlay=false, max_labels_count=500)
+
+// === Inputs ===
+lv_oversold    = input.float(9.9,   "Oversold (Buy Zone)")
+lv_25          = input.float(25.0,  "TP 25")
+lv_40          = input.float(40.0,  "TP 40")
+lv_mid         = input.float(50.0,  "TP 50")
+lv_60          = input.float(60.0,  "TP 60")
+lv_77          = input.float(77.38, "TP 77.38")
+lv_overbought  = input.float(90.5,  "Overbought (Sell Zone)")
+normalizePrice = input.bool(true, "Normalize price to RSI scale (0-100)")
+normPeriod     = input.int(200, "Normalize lookback (bars)", minval=10)
+
+// === Horizontal Levels ===
+hline(lv_oversold,   title="Buy Zone",    color=color.teal,  linewidth=2)
+hline(lv_25,         title="TP 25",       color=color.gray,  linestyle=hline.style_dotted)
+hline(lv_40,         title="TP 40",       color=color.gray,  linestyle=hline.style_dotted)
+hline(lv_mid,        title="TP 50",       color=color.blue,  linewidth=2)
+hline(lv_60,         title="TP 60",       color=color.gray,  linestyle=hline.style_dotted)
+hline(lv_77,         title="TP 77.38",    color=color.orange,linewidth=2)
+hline(lv_overbought, title="Sell Zone",   color=color.red,   linewidth=2)
+
+// === Price Line (single-line conditional) ===
+pricePlot = normalizePrice ? ((close - ta.lowest(close, normPeriod)) / math.max(ta.highest(close, normPeriod) - ta.lowest(close, normPeriod), 1e-10)) * 100 : close
+plot(pricePlot, title="Price Line", color=color.yellow, linewidth=2)
+
+// === Labels (only one set on last bar) ===
+var label sellLabel = na
+var label buyLabel  = na
+var label tp25      = na
+var label tp40      = na
+var label tp50      = na
+var label tp60      = na
+var label tp77      = na
+
+if barstate.islast
+    if not na(sellLabel)
+        label.delete(sellLabel)
+    if not na(buyLabel)
+        label.delete(buyLabel)
+    if not na(tp25)
+        label.delete(tp25)
+    if not na(tp40)
+        label.delete(tp40)
+    if not na(tp50)
+        label.delete(tp50)
+    if not na(tp60)
+        label.delete(tp60)
+    if not na(tp77)
+        label.delete(tp77)
+
+    sellLabel := label.new(bar_index, lv_overbought, "SELL", yloc=yloc.price, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+    buyLabel  := label.new(bar_index, lv_oversold, "BUY", yloc=yloc.price, style=label.style_label_up, color=color.teal, textcolor=color.white, size=size.normal)
+    tp25      := label.new(bar_index, lv_25, "TP 25", yloc=yloc.price, style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.small)
+    tp40      := label.new(bar_index, lv_40, "TP 40", yloc=yloc.price, style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.small)
+    tp50      := label.new(bar_index, lv_mid, "TP 50", yloc=yloc.price, style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.small)
+    tp60      := label.new(bar_index, lv_60, "TP 60", yloc=yloc.price, style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.small)
+    tp77      := label.new(bar_index, lv_77, "TP 77.38", yloc=yloc.price, style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.small)

@@ -1,0 +1,357 @@
+//@version=5
+indicator("Market Structures (BOS, CHoCH, CHoCH+)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+showBOS = input.bool(true, "Show Break of Structure (BOS)", group="Market Structures")
+showCHoCH = input.bool(true, "Show Change of Character (CHoCH)", group="Market Structures")
+showCHoCHPlus = input.bool(true, "Show Change of Character Plus (CHoCH+)", group="Market Structures")
+swingLength = input.int(10, "Swing Length", minval=5, maxval=50, tooltip="Number of bars to identify significant highs and lows", group="Market Structures")
+
+// Candle Coloring
+chochCandleColor = input.bool(false, "CHoCH Candle Coloring", group="Candle Coloring")
+chochPlusCandleColor = input.bool(false, "CHoCH+ Candle Coloring", group="Candle Coloring")
+
+// Colors
+bosBullColor = input.color(color.new(color.green, 0), "Bullish BOS", group="Colors")
+bosBearColor = input.color(color.new(color.red, 0), "Bearish BOS", group="Colors")
+chochBullColor = input.color(color.new(color.blue, 0), "Bullish CHoCH", group="Colors")
+chochBearColor = input.color(color.new(color.orange, 0), "Bearish CHoCH", group="Colors")
+chochPlusBullColor = input.color(color.new(color.aqua, 0), "Bullish CHoCH+", group="Colors")
+chochPlusBearColor = input.color(color.new(color.fuchsia, 0), "Bearish CHoCH+", group="Colors")
+
+// Add ATR-based pivot filtering inputs (new)
+atrLength = input.int(14, "ATR Length (pivot filter)", minval=1, group="Market Structures")
+atrMultiplier = input.float(1.0, "ATR Multiplier (pivot filter)", minval=0.0, step=0.1, group="Market Structures")
+
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
+
+type SwingPoint
+    float price
+    int barIndex
+    bool isHigh
+    
+type MarketStructure
+    string structureType  // "BOS", "CHoCH", "CHoCH+"
+    bool isBullish
+    float fromPrice
+    float toPrice
+    int fromBar
+    int toBar
+    line structureLine
+    label structureLabel
+
+var array<MarketStructure> structures = array.new<MarketStructure>()
+
+// Track swing points
+var array<SwingPoint> swingHighs = array.new<SwingPoint>()
+var array<SwingPoint> swingLows = array.new<SwingPoint>()
+
+// Track current trend state
+var string currentTrend = "none"  // "bullish", "bearish", "none"
+var float lastHigherHigh = na
+var float lastHigherLow = na
+var float lastLowerHigh = na
+var float lastLowerLow = na
+var int lastHHBar = na
+var int lastHLBar = na
+var int lastLHBar = na
+var int lastLLBar = na
+
+// Candle coloring state
+var color currentCandleColor = na
+var string lastCHoCHType = "none"  // "choch", "chochplus", "none"
+
+// ============================================================================
+// MARKET STRUCTURE LOGIC
+// ============================================================================
+
+// Helper: betterCross functions (missing previously) --------------------------
+betterBullCross(pivotPrice) =>
+    // bullish cross: price closed above pivot and previous close was at or below pivot
+    close > pivotPrice and close[1] <= pivotPrice
+
+betterBearCross(pivotPrice) =>
+    // bearish cross: price closed below pivot and previous close was at or above pivot
+    close < pivotPrice and close[1] >= pivotPrice
+
+// Create market structure
+createStructure(structType, isBull, fromPrice, toPrice, fromBar, toBar) =>
+    ms = MarketStructure.new()
+    ms.structureType := structType
+    ms.isBullish := isBull
+    ms.fromPrice := fromPrice
+    ms.toPrice := toPrice
+    ms.fromBar := fromBar
+    ms.toBar := toBar
+    
+    // Determine color and label
+    lineColor = color.gray
+    labelText = ""
+    
+    if structType == "BOS"
+        lineColor := isBull ? bosBullColor : bosBearColor
+        labelText := isBull ? "BOS" : "BOS"
+    else if structType == "CHoCH"
+        lineColor := isBull ? chochBullColor : chochBearColor
+        labelText := isBull ? "CHoCH" : "CHoCH"
+    else if structType == "CHoCH+"
+        lineColor := isBull ? chochPlusBullColor : chochPlusBearColor
+        labelText := isBull ? "CHoCH+" : "CHoCH+"
+    
+    // Create HORIZONTAL line at fromPrice from fromBar to toBar
+    ms.structureLine := line.new(x1=fromBar, y1=fromPrice, x2=toBar, y2=fromPrice, xloc=xloc.bar_index,
+         color=lineColor, width=2, style=line.style_solid, extend=extend.none)
+    
+    // Create label at middle of fromBar and toBar
+    midBar = math.round((fromBar + toBar) / 2)
+    yOffset = syminfo.mintick * 12
+    labelY = isBull ? (fromPrice - yOffset) : (fromPrice + yOffset)
+    labelStyle = isBull ? label.style_label_up : label.style_label_down
+    ms.structureLabel := label.new(midBar, labelY, text=labelText, 
+         style=labelStyle, color=lineColor, textcolor=color.white, size=size.normal)
+    
+    ms
+
+// Check for Break of Structure (BOS) - uses recent pivot comparisons + cross confirmation
+checkBOS(trend) =>
+    detectedBOS = false
+    isBullish = false
+    fromPrice = 0.0
+    toPrice = 0.0
+    fromBar = 0
+    toBar = 0
+    newTrend = trend
+
+    if array.size(swingHighs) >= 2 and array.size(swingLows) >= 2
+        lastHigh = array.get(swingHighs, array.size(swingHighs) - 1)
+        prevHigh = array.get(swingHighs, array.size(swingHighs) - 2)
+        lastLow = array.get(swingLows, array.size(swingLows) - 1)
+        prevLow = array.get(swingLows, array.size(swingLows) - 2)
+
+        // Bullish BOS: structure of Higher Low then Higher High and price confirmed above recent high
+        if lastLow.price > prevLow.price and lastHigh.price > prevHigh.price
+            if lastLow.barIndex > prevLow.barIndex and lastHigh.barIndex > lastLow.barIndex
+                if betterBullCross(prevHigh.price) or close > lastHigh.price
+                    if trend == "bullish" or trend == "none"
+                        detectedBOS := true
+                        isBullish := true
+                        fromPrice := prevHigh.price
+                        toPrice := lastHigh.price
+                        fromBar := prevHigh.barIndex
+                        toBar := lastHigh.barIndex
+                        newTrend := "bullish"
+
+        // Bearish BOS: Lower High then Lower Low and price confirmed below recent low
+        else if lastHigh.price < prevHigh.price and lastLow.price < prevLow.price
+            if lastHigh.barIndex > prevHigh.barIndex and lastLow.barIndex > lastHigh.barIndex
+                if betterBearCross(prevLow.price) or close < lastLow.price
+                    if trend == "bearish" or trend == "none"
+                        detectedBOS := true
+                        isBullish := false
+                        fromPrice := prevLow.price
+                        toPrice := lastLow.price
+                        fromBar := prevLow.barIndex
+                        toBar := lastLow.barIndex
+                        newTrend := "bearish"
+
+    [detectedBOS, isBullish, fromPrice, toPrice, fromBar, toBar, newTrend]
+
+// Check for Change of Character (CHoCH)
+checkCHoCH(trend) =>
+    detectedCHoCH = false
+    isBullish = false
+    fromPrice = 0.0
+    toPrice = 0.0
+    fromBar = 0
+    toBar = 0
+    newTrend = trend
+
+    if array.size(swingHighs) >= 2 and array.size(swingLows) >= 2
+        lastHigh = array.get(swingHighs, array.size(swingHighs) - 1)
+        prevHigh = array.get(swingHighs, array.size(swingHighs) - 2)
+        lastLow = array.get(swingLows, array.size(swingLows) - 1)
+        prevLow = array.get(swingLows, array.size(swingLows) - 2)
+
+        // Bullish CHoCH: during bearish trend, price breaks above a recent high pivot
+        if trend == "bearish"
+            if betterBullCross(prevHigh.price) or close > prevHigh.price
+                detectedCHoCH := true
+                isBullish := true
+                fromPrice := prevHigh.price
+                toPrice := lastHigh.price
+                fromBar := prevHigh.barIndex
+                toBar := lastHigh.barIndex
+                newTrend := "bullish"
+
+        // Bearish CHoCH: during bullish trend, price breaks below a recent low pivot
+        else if trend == "bullish"
+            if betterBearCross(prevLow.price) or close < prevLow.price
+                detectedCHoCH := true
+                isBullish := false
+                fromPrice := prevLow.price
+                toPrice := lastLow.price
+                fromBar := prevLow.barIndex
+                toBar := lastLow.barIndex
+                newTrend := "bearish"
+
+    [detectedCHoCH, isBullish, fromPrice, toPrice, fromBar, toBar, newTrend]
+
+// Check for Change of Character Plus (CHoCH+)
+// Upgrades CHoCH when the newly formed pivot is "stronger" in the same direction
+checkCHoCHPlus(trend) =>
+    detectedCHoCHPlus = false
+    isBullish = false
+    fromPrice = 0.0
+    toPrice = 0.0
+    fromBar = 0
+    toBar = 0
+    newTrend = trend
+
+    if array.size(swingHighs) >= 3 and array.size(swingLows) >= 3
+        lastHigh = array.get(swingHighs, array.size(swingHighs) - 1)
+        prevHigh = array.get(swingHighs, array.size(swingHighs) - 2)
+        prevHigh2 = array.get(swingHighs, array.size(swingHighs) - 3)
+        lastLow = array.get(swingLows, array.size(swingLows) - 1)
+        prevLow = array.get(swingLows, array.size(swingLows) - 2)
+        prevLow2 = array.get(swingLows, array.size(swingLows) - 3)
+
+        // Bullish CHoCH+: during bearish trend, price breaks above prevHigh (CHoCH occurs)
+        // and the newly formed recent low is lower than the previous low (per provided rule)
+        if trend == "bearish"
+            if (betterBullCross(prevHigh.price) or close > prevHigh.price)
+                // Upgrade to CHoCH+ if new low is stronger (lower) than previous low per request
+                if lastLow.price < prevLow.price
+                    detectedCHoCHPlus := true
+                    isBullish := true
+                    fromPrice := prevHigh.price
+                    toPrice := lastHigh.price
+                    fromBar := prevHigh.barIndex
+                    toBar := lastHigh.barIndex
+                    newTrend := "bullish"
+
+        // Bearish CHoCH+: during bullish trend, price breaks below prevLow and new high is higher than previous high
+        else if trend == "bullish"
+            if (betterBearCross(prevLow.price) or close < prevLow.price)
+                if lastHigh.price > prevHigh.price
+                    detectedCHoCHPlus := true
+                    isBullish := false
+                    fromPrice := prevLow.price
+                    toPrice := lastLow.price
+                    fromBar := prevLow.barIndex
+                    toBar := lastLow.barIndex
+                    newTrend := "bearish"
+
+    [detectedCHoCHPlus, isBullish, fromPrice, toPrice, fromBar, toBar, newTrend]
+
+// ============================================================================
+// MAIN LOGIC
+// ============================================================================
+
+var bool newBOSDetected = false
+var bool newCHoCHDetected = false
+var bool newCHoCHPlusDetected = false
+
+// Precompute ATR and pivots on every bar for consistency ---------------------
+atr = ta.atr(atrLength)
+ph = ta.pivothigh(high, swingLength, swingLength)
+pl = ta.pivotlow(low, swingLength, swingLength)
+
+// Detect swing points
+if barstate.isconfirmed
+    newBOSDetected := false
+    newCHoCHDetected := false
+    newCHoCHPlusDetected := false
+
+    // When a pivot high is detected (ph is not na), create a SwingPoint and apply ATR filter
+    if not na(ph)
+        pivotPrice = ph
+        pivotBar = bar_index - swingLength
+        accept = true
+        if array.size(swingHighs) > 0
+            lastSame = array.get(swingHighs, array.size(swingHighs) - 1)
+            // require price change relative to last pivot >= ATR * multiplier
+            accept := math.abs(pivotPrice - lastSame.price) >= atr * atrMultiplier
+        if accept
+            sp = SwingPoint.new()
+            sp.price := pivotPrice
+            sp.barIndex := pivotBar
+            sp.isHigh := true
+            array.push(swingHighs, sp)
+            if array.size(swingHighs) > 50
+                array.shift(swingHighs)
+
+    // When a pivot low is detected
+    if not na(pl)
+        pivotPrice = pl
+        pivotBar = bar_index - swingLength
+        accept = true
+        if array.size(swingLows) > 0
+            lastSame = array.get(swingLows, array.size(swingLows) - 1)
+            accept := math.abs(pivotPrice - lastSame.price) >= atr * atrMultiplier
+        if accept
+            sp = SwingPoint.new()
+            sp.price := pivotPrice
+            sp.barIndex := pivotBar
+            sp.isHigh := false
+            array.push(swingLows, sp)
+            if array.size(swingLows) > 50
+                array.shift(swingLows)
+
+    // Check for market structures (priority: CHoCH+ > CHoCH > BOS)
+    structureDetected = false
+
+    // Check CHoCH+
+    if showCHoCHPlus and not structureDetected
+        [detected, isBull, fPrice, tPrice, fBar, tBar, newTrend] = checkCHoCHPlus(currentTrend)
+        if detected
+            ms = createStructure("CHoCH+", isBull, fPrice, tPrice, fBar, tBar)
+            array.push(structures, ms)
+            structureDetected := true
+            currentTrend := newTrend
+            newCHoCHPlusDetected := true
+
+            if chochPlusCandleColor
+                currentCandleColor := isBull ? chochPlusBullColor : chochPlusBearColor
+
+    // Check CHoCH
+    if showCHoCH and not structureDetected
+        [detected, isBull, fPrice, tPrice, fBar, tBar, newTrend] = checkCHoCH(currentTrend)
+        if detected
+            ms = createStructure("CHoCH", isBull, fPrice, tPrice, fBar, tBar)
+            array.push(structures, ms)
+            structureDetected := true
+            currentTrend := newTrend
+            newCHoCHDetected := true
+
+            if chochCandleColor
+                currentCandleColor := isBull ? chochBullColor : chochBearColor
+
+    // Check BOS
+    if showBOS and not structureDetected
+        [detected, isBull, fPrice, tPrice, fBar, tBar, newTrend] = checkBOS(currentTrend)
+        if detected
+            ms = createStructure("BOS", isBull, fPrice, tPrice, fBar, tBar)
+            array.push(structures, ms)
+            currentTrend := newTrend
+            newBOSDetected := true
+
+// ============================================================================
+// CANDLE COLORING
+// ============================================================================
+
+candleColor = (chochCandleColor or chochPlusCandleColor) ? currentCandleColor : na
+barcolor(candleColor)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(newBOSDetected, "BOS Detected", "Break of Structure detected")
+alertcondition(newCHoCHDetected, "CHoCH Detected", "Change of Character detected")
+alertcondition(newCHoCHPlusDetected, "CHoCH+ Detected", "Change of Character Plus detected")
+
+

@@ -1,0 +1,146 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © deven0
+
+//@version=5
+indicator('Super Setup v1.5', overlay=true, max_labels_count=500)
+
+// Hardcoded values for hidden parameters
+candle_stability_index_param = 0.5  // Fixed value for Candle Stability Index
+rsi_index_param = 70  // Fixed value for RSI Index
+candle_delta_length_param = 6  // Fixed value for Candle Delta Length
+disable_repeating_signals_param = input.bool(true, 'Disable Repeating Signals', group='Technical', tooltip='Removes repeating signals. Useful for removing clusters of signals and general clarity')
+
+GREEN = #388e3c
+RED =  #b22833
+TRANSPARENT = color.rgb(0, 0, 0, 100)
+
+label_size = input.string('normal', 'Label Size', options=['huge', 'large', 'normal', 'small', 'tiny'], group='Cosmetic')
+label_style = input.string('text bubble', 'Label Style', ['text bubble', 'triangle', 'arrow'], group='Cosmetic')
+buy_label_color = input(GREEN, 'BUY Label Color', inline='Highlight', group='Cosmetic')
+sell_label_color = input(RED, 'SELL Label Color', inline='Highlight', group='Cosmetic')
+label_text_color = input(color.white, 'Label Text Color', inline='Highlight', group='Cosmetic')
+
+// ATR calculation for profit target
+atr_length = input.int(14, title="ATR Length")
+atr_multiplier = input.float(2.5, title="ATR Multiplier for Book Profit")
+atr_value = ta.atr(atr_length)
+
+// Calculations for conditions
+stable_candle = math.abs(close - open) / ta.tr > candle_stability_index_param
+rsi = ta.rsi(close, 14)
+
+bullish_engulfing = close[1] < open[1] and close > open and close > open[1]
+rsi_below = rsi < rsi_index_param
+decrease_over = close < close[candle_delta_length_param]
+
+bull = bullish_engulfing and stable_candle and rsi_below and decrease_over and barstate.isconfirmed
+
+bearish_engulfing = close[1] > open[1] and close < open and close < open[1]
+rsi_above = rsi > 100 - rsi_index_param
+increase_over = close > close[candle_delta_length_param]
+
+bear = bearish_engulfing and stable_candle and rsi_above and increase_over and barstate.isconfirmed
+
+var last_signal = ''
+var float buy_entry_price = na
+var float sell_entry_price = na
+var bool buy_label_plotted = false
+var bool sell_label_plotted = false
+
+if bull and (disable_repeating_signals_param ? (last_signal != 'buy' ? true : na) : true)
+    buy_entry_price := close
+    buy_label_plotted := false  // Reset label plotted flag when a new buy signal occurs
+    if label_style == 'text bubble'
+        label.new(bull ? bar_index : na, low, '▲ Bottom', color=buy_label_color, style=label.style_label_up, textcolor=label_text_color, size=label_size)
+    else if label_style == 'triangle'
+        label.new(bull ? bar_index : na, low, '▲ Bottom', yloc=yloc.belowbar, color=buy_label_color, style=label.style_triangleup, textcolor=TRANSPARENT, size=label_size)
+    else if label_style == 'arrow'
+        label.new(bull ? bar_index : na, low, '▲ Bottom', yloc=yloc.belowbar, color=buy_label_color, style=label.style_arrowup, textcolor=TRANSPARENT, size=label_size)
+    
+    last_signal := 'buy'
+
+if bear and (disable_repeating_signals_param ? (last_signal != 'sell' ? true : na) : true)
+    sell_entry_price := close
+    sell_label_plotted := false  // Reset label plotted flag when a new sell signal occurs
+    if label_style == 'text bubble'
+        label.new(bear ? bar_index : na, high, '▼ TOP', color=sell_label_color, style=label.style_label_down, textcolor=label_text_color, size=label_size)
+    else if label_style == 'triangle'
+        label.new(bear ? bar_index : na, high, '▼ TOP', yloc=yloc.abovebar, color=sell_label_color, style=label.style_triangledown, textcolor=TRANSPARENT, size=label_size)
+    else if label_style == 'arrow'
+        label.new(bear ? bar_index : na, high, '▼ TOP', yloc=yloc.abovebar, color=sell_label_color, style=label.style_arrowdown, textcolor=TRANSPARENT, size=label_size)
+    
+    last_signal := 'sell'
+
+// Book profit labels based on ATR, only plot once
+if not na(buy_entry_price) and not buy_label_plotted
+    buy_profit_target = buy_entry_price + atr_multiplier * atr_value
+    if close >= buy_profit_target
+        label.new(bar_index, high, "Book Profit", color=color.blue, style=label.style_label_down, textcolor=color.white, size=label_size)
+        buy_label_plotted := true  // Mark label as plotted
+
+if not na(sell_entry_price) and not sell_label_plotted
+    sell_profit_target = sell_entry_price - atr_multiplier * atr_value
+    if close <= sell_profit_target
+        label.new(bar_index, low, "Book Profit", color=color.blue, style=label.style_label_up, textcolor=color.white, size=label_size)
+        sell_label_plotted := true  // Mark label as plotted
+
+// Market Structure Break (MSB) Detection
+
+// Function to detect swing highs and lows
+f_swingHighLow(_src, _len) =>
+    _sw = high >= ta.highest(high, _len)
+    _lw = low <= ta.lowest(low, _len)
+    [_sw, _lw]
+
+// User inputs for market structure break
+var len = input.int(20, minval=1, title='Loopback')
+var mult = input.float(1, minval=0.1, title='Multiplier')
+bullish_MSB_Color = input.color(color.green, title='Bullish MSB Color', inline='Bullish MSB Style')
+bearish_MSB_Color = input.color(color.red, title='Bearish MSB Color', inline='Bearish MSB Style')
+bullish_MSB_Width = input.int(1, minval=1, maxval=5, title='Line Width', inline='Bullish MSB Style')
+bearish_MSB_Width = input.int(1, minval=1, maxval=5, title='Line Width', inline='Bearish MSB Style')
+
+// Calculation of swing highs and lows
+[sh, sl] = f_swingHighLow(close, len)
+
+// Identify market structure break
+break_up = sh and sh[1] == false and close > high[1] * mult
+break_down = sl and sl[1] == false and close < low[1] * mult
+
+// Draw lines on market structure break
+var line bullish_MSB = na
+var line bearish_MSB = na
+var float highest_MSB = na
+var float lowest_MSB = na
+
+if break_up
+    // Find the bar_index where the swing high is and draw a line until the candle CLOSES ABOVE the market structure
+    for i = 1 to 100 by 1
+        if sh[i]
+            bullish_MSB := line.new(bar_index[i], high[i], bar_index, high[i], color=bullish_MSB_Color, width=bullish_MSB_Width)
+            highest_MSB := high[i]
+            break
+
+if break_down
+    // Find the bar_index where the swing low is and draw a line until the candle CLOSES BELOW the market structure
+    for i = 1 to 100 by 1
+        if sl[i]
+            bearish_MSB := line.new(bar_index[i], low[i], bar_index, low[i], color=bearish_MSB_Color, width=bearish_MSB_Width)
+            lowest_MSB := low[i]
+            break
+
+// Calculate the 200-period EMA
+ema200 = ta.ema(close, 200)
+
+// Plot the 200 EMA
+plot(ema200, title="200 EMA", color=color.red, linewidth=2)
+
+// VWAP calculation
+vwapValue = ta.vwap(close)
+
+// Plot VWAP line
+plot(vwapValue, title="VWAP", color=color.black, linewidth=2)
+
+// Alerts
+alertcondition(bull, 'BUY Signals', 'New signal: BUY')
+alertcondition(bear, 'SELL Signals', 'New signal: SELL')

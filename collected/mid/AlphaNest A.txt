@@ -1,0 +1,478 @@
+//@version=6
+indicator("AlphaNest A", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+
+// === INPUTS ===
+showRibbon = input.bool(true, "Show EMA Ribbon", group="EMA Settings")
+ema1Len = input.int(5, "EMA 1 Length", group="EMA Settings")
+ema2Len = input.int(11, "EMA 2 Length", group="EMA Settings")
+ema3Len = input.int(15, "EMA 3 Length", group="EMA Settings")
+ema4Len = input.int(18, "EMA 4 Length", group="EMA Settings")
+ema5Len = input.int(21, "EMA 5 Length", group="EMA Settings")
+ema6Len = input.int(24, "EMA 6 Length", group="EMA Settings")
+ema7Len = input.int(28, "EMA 7 Length", group="EMA Settings")
+ema8Len = input.int(34, "EMA 8 Length", group="EMA Settings")
+
+// Added new EMA input
+emaExtraLen = input.int(200, "Extra EMA Length", group="EMA Settings", tooltip="This EMA is for visual reference only and not used in signals.")
+
+tpCount = input.int(4, "Number of Take Profits", minval=1, maxval=4, group="Trade Management")
+atrrMultiplier = input.float(2, "ATR Multiplier for SL", group="Trade Management")
+atrrTPFactor = input.float(1.0, "TP Multiplier (relative to SL)", group="Trade Management")
+atrLen = input.int(14, "ATR Length", group="Trade Management")
+showTP_SL_Lines = input.bool(true, "Show TP/SL Lines & Boxes", group="Trade Management")
+
+// Dashboard Input
+showDashboard = input.bool(true, "Show Trend Analysis Dashboard", group="Dashboard Settings")
+dashboardPosition = input.string("Bottom Right", "Dashboard Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group="Dashboard Settings")
+combinedTrendTF1 = input.string("5", "Combined Trend Timeframe 1", options=["5", "15", "30", "60", "240", "D"], group="Dashboard Settings")
+combinedTrendTF2 = input.string("15", "Combined Trend Timeframe 2", options=["5", "15", "30", "60", "240", "D"], group="Dashboard Settings")
+combinedTrendTF3 = input.string("30", "Combined Trend Timeframe 3", options=["5", "15", "30", "60", "240", "D"], group="Dashboard Settings")
+
+// Unified Border Color Input
+widgetBorderColor = input.color(#000000, "Screener & Dashboard border's colors", group="Widget Style", tooltip="Changes all borders and outlines for both screener and dashboard")
+
+// === SCREENER INPUTS ===
+showScreener = input.bool(true, "Show Screener", group="Screener Settings")
+screenerPosition = input.string("Top Right", "Screener Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group="Screener Settings")
+maxSymbols = input.int(10, "Max Symbols to Display", minval=1, maxval=14, group="Screener Settings")
+
+// Symbol inputs for screener - Made more user-friendly
+symbol1 = input.symbol("NSE:BANKNIFTY", "Symbol 1", group="Screener Symbols")
+symbol2 = input.symbol("NSE:NIFTY", "Symbol 2", group="Screener Symbols")
+symbol3 = input.symbol("NSE:SBIN", "Symbol 3", group="Screener Symbols")
+symbol4 = input.symbol("NSE:HCLTECH", "Symbol 4", group="Screener Symbols")
+symbol5 = input.symbol("NSE:ICICIBANK", "Symbol 5", group="Screener Symbols")
+symbol6 = input.symbol("NSE:RELIANCE", "Symbol 6", group="Screener Symbols")
+symbol7 = input.symbol("NSE:TATASTEEL", "Symbol 7", group="Screener Symbols")
+symbol8 = input.symbol("NSE:HAVELLS", "Symbol 8", group="Screener Symbols")
+symbol9 = input.symbol("NSE:ITC", "Symbol 9", group="Screener Symbols")
+symbol10 = input.symbol("NSE:ACC", "Symbol 10", group="Screener Symbols")
+symbol11 = input.symbol("NSE:ADANIPORTS", "Symbol 11", group="Screener Symbols")
+symbol12 = input.symbol("NSE:AJANTPHARM", "Symbol 12", group="Screener Symbols")
+symbol13 = input.symbol("NSE:AMBUJACEM", "Symbol 13", group="Screener Symbols")
+symbol14 = input.symbol("NSE:APOLLOHOSP", "Symbol 14", group="Screener Symbols")
+
+// === CALCULATIONS ===
+ema1 = ta.ema(close, ema1Len)
+ema2 = ta.ema(close, ema2Len)
+ema3 = ta.ema(close, ema3Len)
+ema4 = ta.ema(close, ema4Len)
+ema5 = ta.ema(close, ema5Len)
+ema6 = ta.ema(close, ema6Len)
+ema7 = ta.ema(close, ema7Len)
+ema8 = ta.ema(close, ema8Len)
+
+// New EMA calculation
+emaExtra = ta.ema(close, emaExtraLen)
+
+// Determine ribbon direction
+ribbonDir = ema8 < ema2
+
+// Signal generation for crossovers
+longSignal = ta.crossover(ema2, ema8)
+shortSignal = ta.crossover(ema8, ema2)
+
+// === PLOTS - EMA Ribbon ===
+p1 = plot(ema1, color=showRibbon ? (ribbonDir ? #1573d4 : color.gray) : na, linewidth=2, title="EMA 1")
+p2 = plot(ema2, color=showRibbon ? (ribbonDir ? #3096ff : color.gray) : na, linewidth=2, title="EMA 2")
+plot(ema3, color=showRibbon ? (ribbonDir ? #57abff : color.gray) : na, linewidth=2, title="EMA 3")
+plot(ema4, color=showRibbon ? (ribbonDir ? #85c2ff : color.gray) : na, linewidth=2, title="EMA 4")
+plot(ema5, color=showRibbon ? (ribbonDir ? #9bcdff : color.gray) : na, linewidth=2, title="EMA 5")
+plot(ema6, color=showRibbon ? (ribbonDir ? #b3d9ff : color.gray) : na, linewidth=2, title="EMA 6")
+plot(ema7, color=showRibbon ? (ribbonDir ? #c9e5ff : color.gray) : na, linewidth=2, title="EMA 7")
+p8 = plot(ema8, color=showRibbon ? (ribbonDir ? #dfecfb : color.gray) : na, linewidth=2, title="EMA 8")
+
+// Plotting the extra EMA
+plot(emaExtra, "Extra EMA", color.new(color.purple, 0), 2)
+
+// === TRADE STATE VARIABLES ===
+var label signalLabel = na
+var array<float> currentTPLevels = array.new<float>()
+var array<bool> tpHitStatus = array.new<bool>()
+var float currentSLLevel = na
+var int tradeDirection = 0
+var bool tradeActive = false
+var int tradeEndX = na
+var array<line> tpLines = array.new<line>()
+var line slLine = na
+var line entryLine = na
+var array<label> rightLabels = array.new<label>()
+var float plotEntryLevelVal = na
+var float plotSLLevelVal = na
+var float plotTP4LevelVal = na
+var box tpBox = na
+var box slBox = na
+
+// === ATR ===
+atr = ta.atr(atrLen)
+
+// === SIGNAL HANDLING ===
+if (longSignal or shortSignal)
+    // Delete previous drawings
+    if not na(signalLabel)
+        label.delete(signalLabel)
+
+    if array.size(tpLines) > 0
+        for i = 0 to array.size(tpLines) - 1
+            line.delete(array.get(tpLines, i))
+    array.clear(tpLines)
+
+    if not na(slLine)
+        line.delete(slLine)
+        slLine := na
+
+    if not na(entryLine)
+        line.delete(entryLine)
+        entryLine := na
+
+    if array.size(rightLabels) > 0
+        for i = 0 to array.size(rightLabels) - 1
+            label.delete(array.get(rightLabels, i))
+    array.clear(rightLabels)
+
+    if not na(tpBox)
+        box.delete(tpBox)
+    tpBox := na
+
+    if not na(slBox)
+        box.delete(slBox)
+    slBox := na
+
+    // Setup new trade state
+    tradeActive := true
+    tradeEndX := na
+    tradeDirection := longSignal ? 1 : -1
+    entry = close
+    currentSLLevel := entry - tradeDirection * atr * atrrMultiplier
+
+    // Calculate and store TP Levels
+    array.clear(currentTPLevels)
+    array.clear(tpHitStatus)
+    for i = 1 to tpCount
+        tp = entry + tradeDirection * atr * atrrMultiplier * atrrTPFactor * i
+        array.push(currentTPLevels, tp)
+        array.push(tpHitStatus, false)
+
+    // Update plot levels for background filling
+    plotEntryLevelVal := entry
+    plotSLLevelVal := currentSLLevel
+    if array.size(currentTPLevels) >= 4
+        plotTP4LevelVal := array.get(currentTPLevels, 3)
+    else
+        plotTP4LevelVal := na
+
+    // Create BUY/SELL Signal Label
+    signalLabel := label.new(bar_index,
+                             y=tradeDirection > 0 ? low : high,
+                             text=tradeDirection > 0 ? "BUY" : "SELL",
+                             style=tradeDirection > 0 ? label.style_label_up : label.style_label_down,
+                             color=tradeDirection > 0 ? color.green : color.red,
+                             textcolor=color.white,
+                             size=size.small)
+
+    // Create Horizontal TP/SL/Entry Lines & Right-Side Labels
+    int xRightInitial = bar_index + 10
+
+    if showTP_SL_Lines
+        // Create Entry line and label
+        entryRightLabel = label.new(xRightInitial, entry, "ENTRY " + str.tostring(entry, format.mintick), style=label.style_label_left, color=#fff100, textcolor=color.black, size=size.normal)
+        array.push(rightLabels, entryRightLabel)
+        entryLine := line.new(bar_index, entry, xRightInitial, entry, color=#fff100, style=line.style_solid, width=2)
+
+        // Create TP lines and labels
+        for i = 0 to array.size(currentTPLevels) - 1
+            yVal = array.get(currentTPLevels, i)
+            tpLine = line.new(bar_index, yVal, xRightInitial, yVal, color=#00ff00, style=line.style_solid, width=2)
+            array.push(tpLines, tpLine)
+
+            tpLabelText = "TP " + str.tostring(i + 1) + " : " + str.tostring(yVal, format.mintick)
+            tpRightLabel = label.new(xRightInitial, yVal, tpLabelText, style=label.style_label_left, color=#00ff00, textcolor=color.black, size=size.normal)
+            array.push(rightLabels, tpRightLabel)
+
+        // Create SL line and label
+        slLine := line.new(bar_index, currentSLLevel, xRightInitial, currentSLLevel, color=color.red, style=line.style_solid, width=2)
+        slRightLabel = label.new(xRightInitial, currentSLLevel, "SL : " + str.tostring(currentSLLevel, format.mintick), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(rightLabels, slRightLabel)
+
+    // Create Box objects for background filling
+    if showTP_SL_Lines
+        if not na(plotTP4LevelVal)
+            tpBox := box.new(left=bar_index,
+                             top=math.max(entry, plotTP4LevelVal),
+                             bottom=math.min(entry, plotTP4LevelVal),
+                             right=xRightInitial,
+                             bgcolor=color.new(#089981, 80),
+                             border_color=color.rgb(0, 0, 0, 100))
+
+        if not na(plotSLLevelVal)
+            slBox := box.new(left=bar_index,
+                             top=math.max(entry, plotSLLevelVal),
+                             bottom=math.min(entry, plotSLLevelVal),
+                             right=xRightInitial,
+                             bgcolor=color.new(#f23645, 80),
+                             border_color=color.rgb(0, 0, 0, 100))
+
+// === TRADE MANAGEMENT ===
+if tradeActive and showTP_SL_Lines
+    int xRightCurrent = bar_index + 10
+
+    if not na(entryLine)
+        line.set_x2(entryLine, xRightCurrent)
+
+    for i = 0 to array.size(tpLines) - 1
+        if not na(array.get(tpLines, i))
+            line.set_x2(array.get(tpLines, i), xRightCurrent)
+
+    if not na(slLine)
+        line.set_x2(slLine, xRightCurrent)
+
+    if array.size(rightLabels) > 0
+        for i = 0 to array.size(rightLabels) - 1
+            if not na(array.get(rightLabels, i))
+                label.set_x(array.get(rightLabels, i), xRightCurrent)
+
+    if not na(tpBox)
+        box.set_right(tpBox, xRightCurrent)
+    if not na(slBox)
+        box.set_right(slBox, xRightCurrent)
+
+    // Stop Loss hit check
+    slHit = (tradeDirection > 0 and low <= currentSLLevel) or (tradeDirection < 0 and high >= currentSLLevel)
+
+    // Track individual TP hits
+    bool allTPsHit = true
+    for i = 0 to array.size(currentTPLevels) - 1
+        tpLevel = array.get(currentTPLevels, i)
+        if i < array.size(tpHitStatus)
+            isTPHitThisBar = (tradeDirection > 0 and high >= tpLevel) or (tradeDirection < 0 and low <= tpLevel)
+
+            if isTPHitThisBar
+                array.set(tpHitStatus, i, true)
+
+            if not array.get(tpHitStatus, i)
+                allTPsHit := false
+        else
+            allTPsHit := false
+            break
+
+    if slHit or allTPsHit
+        tradeActive := false
+        tradeEndX := bar_index
+
+if not tradeActive and not na(tradeEndX) and showTP_SL_Lines
+    int fixedXRight = tradeEndX + 10
+
+    if not na(entryLine) and line.get_x2(entryLine) != fixedXRight
+        line.set_x2(entryLine, fixedXRight)
+
+    for i = 0 to array.size(tpLines) - 1
+        if not na(array.get(tpLines, i)) and line.get_x2(array.get(tpLines, i)) != fixedXRight
+            line.set_x2(array.get(tpLines, i), fixedXRight)
+
+    if not na(slLine) and line.get_x2(slLine) != fixedXRight
+        line.set_x2(slLine, fixedXRight)
+
+    if array.size(rightLabels) > 0
+        for i = 0 to array.size(rightLabels) - 1
+            if not na(array.get(rightLabels, i)) and label.get_x(array.get(rightLabels, i)) != fixedXRight
+                label.set_x(array.get(rightLabels, i), fixedXRight)
+
+    if not na(tpBox) and box.get_right(tpBox) != fixedXRight
+        box.set_right(tpBox, fixedXRight)
+    if not na(slBox)
+        box.set_right(slBox, fixedXRight)
+
+// === ALERTS ===
+alertcondition(longSignal, title="Long EMA Cross", message="Long EMA Crossover Signal")
+alertcondition(shortSignal, title="Short EMA Cross", message="Short Crossover Signal")
+
+// === HELPER FUNCTIONS ===
+// Function to get table position
+getTablePosition(pos) =>
+    switch pos
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        => position.top_right
+
+// Function to extract symbol name from full symbol string
+getSymbolName(fullSymbol) =>
+    parts = str.split(fullSymbol, ":")
+    array.size(parts) > 1 ? array.get(parts, 1) : fullSymbol
+
+// Function to get data for any symbol
+getSymbolData(sym) =>
+    [request.security(sym, timeframe.period, ta.ema(close, ema2Len), lookahead=barmerge.lookahead_off),
+     request.security(sym, timeframe.period, ta.ema(close, ema8Len), lookahead=barmerge.lookahead_off),
+     request.security(sym, timeframe.period, ta.crossover(ta.ema(close, ema2Len), ta.ema(close, ema8Len)), lookahead=barmerge.lookahead_off),
+     request.security(sym, timeframe.period, ta.crossover(ta.ema(close, ema8Len), ta.ema(close, ema2Len)), lookahead=barmerge.lookahead_off)]
+
+// Function to check recent signals
+hasRecentLongSignal(currentSignal, ema2Val, ema8Val) =>
+    currentSignal or (ema8Val < ema2Val and ta.crossover(ema2Val, ema8Val)[1]) or (ema8Val < ema2Val and ta.crossover(ema2Val, ema8Val)[2]) or (ema8Val < ema2Val and ta.crossover(ema2Val, ema8Val)[3]) or (ema8Val < ema2Val and ta.crossover(ema2Val, ema8Val)[4])
+
+hasRecentShortSignal(currentSignal, ema2Val, ema8Val) =>
+    currentSignal or (ema8Val > ema2Val and ta.crossover(ema8Val, ema2Val)[1]) or (ema8Val > ema2Val and ta.crossover(ema8Val, ema2Val)[2]) or (ema8Val > ema2Val and ta.crossover(ema8Val, ema2Val)[3]) or (ema8Val > ema2Val and ta.crossover(ema8Val, ema2Val)[4])
+
+// Multi-timeframe data for trend analysis
+tf5_ema2 = request.security(syminfo.tickerid, "5", ta.ema(close, ema2Len), lookahead=barmerge.lookahead_off)
+tf5_ema8 = request.security(syminfo.tickerid, "5", ta.ema(close, ema8Len), lookahead=barmerge.lookahead_off)
+
+tf15_ema2 = request.security(syminfo.tickerid, "15", ta.ema(close, ema2Len), lookahead=barmerge.lookahead_off)
+tf15_ema8 = request.security(syminfo.tickerid, "15", ta.ema(close, ema8Len), lookahead=barmerge.lookahead_off)
+
+tf30_ema2 = request.security(syminfo.tickerid, "30", ta.ema(close, ema2Len), lookahead=barmerge.lookahead_off)
+tf30_ema8 = request.security(syminfo.tickerid, "30", ta.ema(close, ema8Len), lookahead=barmerge.lookahead_off)
+
+tf60_ema2 = request.security(syminfo.tickerid, "60", ta.ema(close, ema2Len), lookahead=barmerge.lookahead_off)
+tf60_ema8 = request.security(syminfo.tickerid, "60", ta.ema(close, ema8Len), lookahead=barmerge.lookahead_off)
+
+tfD_ema2 = request.security(syminfo.tickerid, "D", ta.ema(close, ema2Len), lookahead=barmerge.lookahead_off)
+tfD_ema8 = request.security(syminfo.tickerid, "D", ta.ema(close, ema8Len), lookahead=barmerge.lookahead_off)
+
+// === SCREENER DASHBOARD ===
+if showScreener and barstate.islast
+    var table screenerTable = table.new(getTablePosition(screenerPosition), 2, maxSymbols + 1,
+         bgcolor = color.new(color.rgb(33, 33, 33), 80),
+         border_width = 2, border_color = color.new(widgetBorderColor, 0),
+         frame_width = 3, frame_color = color.new(widgetBorderColor, 0))
+
+    // Header row
+    table.cell(screenerTable, 0, 0, "SCREENER", text_color=color.rgb(0, 0, 0), bgcolor=#03f7ff, text_size=size.small, text_halign=text.align_center)
+    table.merge_cells(screenerTable, 0, 0, 1, 0)
+
+    // Array of symbols for dynamic processing
+    symbolsList = array.new<string>()
+    if maxSymbols >= 1
+        array.push(symbolsList, symbol1)
+    if maxSymbols >= 2
+        array.push(symbolsList, symbol2)
+    if maxSymbols >= 3
+        array.push(symbolsList, symbol3)
+    if maxSymbols >= 4
+        array.push(symbolsList, symbol4)
+    if maxSymbols >= 5
+        array.push(symbolsList, symbol5)
+    if maxSymbols >= 6
+        array.push(symbolsList, symbol6)
+    if maxSymbols >= 7
+        array.push(symbolsList, symbol7)
+    if maxSymbols >= 8
+        array.push(symbolsList, symbol8)
+    if maxSymbols >= 9
+        array.push(symbolsList, symbol9)
+    if maxSymbols >= 10
+        array.push(symbolsList, symbol10)
+    if maxSymbols >= 11
+        array.push(symbolsList, symbol11)
+    if maxSymbols >= 12
+        array.push(symbolsList, symbol12)
+    if maxSymbols >= 13
+        array.push(symbolsList, symbol13)
+    if maxSymbols >= 14
+        array.push(symbolsList, symbol14)
+
+    // Process each symbol
+    for i = 0 to array.size(symbolsList) - 1
+        sym = array.get(symbolsList, i)
+        if sym != ""
+            symbolName = getSymbolName(sym)
+            
+            // Get symbol data
+            [symEma2, symEma8, symLongSignal, symShortSignal] = getSymbolData(sym)
+            
+            // Determine signal status
+            recentLong = hasRecentLongSignal(symLongSignal, symEma2, symEma8)
+            recentShort = hasRecentShortSignal(symShortSignal, symEma2, symEma8)
+            isBullish = symEma8 < symEma2
+            
+            signalStatus = recentLong ? "Long" : recentShort ? "Short" : isBullish ? "Bullish" : "Bearish"
+            signalColor = recentLong ? color.new(#00ff00, 0) : recentShort ? color.new(#ff0000, 0) : isBullish ? color.new(#ffff00, 0) : color.new(#ff6600, 0)
+            
+            // Create table cells with bold text
+            table.cell(screenerTable, 0, i + 1, symbolName, text_color=color.black, bgcolor=#03f7ff, text_size=size.small)
+            table.cell(screenerTable, 1, i + 1, signalStatus, text_color=color.rgb(0, 0, 0), bgcolor=signalColor, text_size=size.small)
+
+// === TREND ANALYSIS DASHBOARD ===
+if showDashboard and barstate.islast
+    // Use the user-selected dashboard position directly
+    trendPosition = getTablePosition(dashboardPosition)
+
+    var table dashboardTable = table.new(trendPosition, 2, 7,
+         bgcolor = color.new(color.rgb(33, 33, 33), 80),
+         border_width = 2, border_color = color.new(widgetBorderColor, 0),
+         frame_width = 3, frame_color = color.new(widgetBorderColor, 0))
+
+    // Header
+    table.cell(dashboardTable, 0, 0, "TREND ANALYSIS", text_color=color.rgb(0, 0, 0), bgcolor=#03f7ff, text_size=size.small, text_halign=text.align_center)
+    table.merge_cells(dashboardTable, 0, 0, 1, 0)
+
+    // Combined status based on selected timeframes
+    tf1Bullish = switch combinedTrendTF1
+        "5" => tf5_ema8 < tf5_ema2
+        "15" => tf15_ema8 < tf15_ema2
+        "30" => tf30_ema8 < tf30_ema2
+        "60" => tf60_ema8 < tf60_ema2
+        "D" => tfD_ema8 < tfD_ema2
+        => false
+        
+    tf2Bullish = switch combinedTrendTF2
+        "5" => tf5_ema8 < tf5_ema2
+        "15" => tf15_ema8 < tf15_ema2
+        "30" => tf30_ema8 < tf30_ema2
+        "60" => tf60_ema8 < tf60_ema2
+        "D" => tfD_ema8 < tfD_ema2
+        => false
+        
+    tf3Bullish = switch combinedTrendTF3
+        "5" => tf5_ema8 < tf5_ema2
+        "15" => tf15_ema8 < tf15_ema2
+        "30" => tf30_ema8 < tf30_ema2
+        "60" => tf60_ema8 < tf60_ema2
+        "D" => tfD_ema8 < tfD_ema2
+        => false
+    
+    bullishCount = (tf1Bullish ? 1 : 0) + (tf2Bullish ? 1 : 0) + (tf3Bullish ? 1 : 0)
+    isOverallBullish = bullishCount >= 2
+    combinedStatus = isOverallBullish ? "Bullish" : "Bearish"
+    combinedColor = isOverallBullish ? color.new(#00ff00, 0) : color.new(#FF0000, 0)
+    
+    table.cell(dashboardTable, 0, 1, "Status", text_color=color.black, bgcolor=#03f7ff, text_size=size.small)
+    table.cell(dashboardTable, 1, 1, combinedStatus, text_color=color.rgb(0, 0, 0), bgcolor=combinedColor, text_size=size.small)
+
+    // Individual timeframes
+    tf5MinBullish = tf5_ema8 < tf5_ema2
+    status5Min = tf5MinBullish ? "Bullish" : "Bearish"
+    color5Min = tf5MinBullish ? color.new(#00ff00, 0) : color.new(#FF0000, 0)
+    
+    tf15MinBullish = tf15_ema8 < tf15_ema2
+    status15Min = tf15MinBullish ? "Bullish" : "Bearish"
+    color15Min = tf15MinBullish ? color.new(#00ff00, 0) : color.new(#FF0000, 0)
+    
+    tf30MinBullish = tf30_ema8 < tf30_ema2
+    status30Min = tf30MinBullish ? "Bullish" : "Bearish"
+    color30Min = tf30MinBullish ? color.new(#00ff00, 0) : color.new(#FF0000, 0)
+    
+    tf1HourBullish = tf60_ema8 < tf60_ema2
+    status1Hour = tf1HourBullish ? "Bullish" : "Bearish"
+    color1Hour = tf1HourBullish ? color.new(#00ff00, 0) : color.new(#FF0000, 0)
+    
+    tfDailyBullish = tfD_ema8 < tfD_ema2
+    statusDaily = tfDailyBullish ? "Bullish" : "Bearish"
+    colorDaily = tfDailyBullish ? color.new(#00ff00, 0) : color.new(#FF0000, 0)
+
+    table.cell(dashboardTable, 0, 2, "5 Min", text_color=color.black, bgcolor=#03f7ff, text_size=size.small)
+    table.cell(dashboardTable, 1, 2, status5Min, text_color=color.rgb(0, 0, 0), bgcolor=color5Min, text_size=size.small)
+
+    table.cell(dashboardTable, 0, 3, "15 Min", text_color=color.rgb(0, 0, 0), bgcolor=#03f7ff, text_size=size.small)
+    table.cell(dashboardTable, 1, 3, status15Min, text_color=color.rgb(0, 0, 0), bgcolor=color15Min, text_size=size.small)
+
+    table.cell(dashboardTable, 0, 4, "30 Min", text_color=color.black, bgcolor=#03f7ff, text_size=size.small)
+    table.cell(dashboardTable, 1, 4, status30Min, text_color=color.rgb(0, 0, 0), bgcolor=color30Min, text_size=size.small)
+
+    table.cell(dashboardTable, 0, 5, "1 Hour", text_color=color.black, bgcolor=#03f7ff, text_size=size.small)
+    table.cell(dashboardTable, 1, 5, status1Hour, text_color=color.rgb(0, 0, 0), bgcolor=color1Hour, text_size=size.small)
+
+    table.cell(dashboardTable, 0, 6, "Daily", text_color=color.black, bgcolor=#03f7ff, text_size=size.small)
+    table.cell(dashboardTable, 1, 6, statusDaily, text_color=color.rgb(0, 0, 0), bgcolor=colorDaily, text_size=size.small)

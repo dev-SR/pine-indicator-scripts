@@ -1,0 +1,798 @@
+//@version=6
+indicator("Advanced Pattern Detection System [50+ Patterns]", overlay=true, max_bars_back=500)
+
+// ============================================
+// INPUT PARAMETERS
+// ============================================
+g1 = "Detection Settings"
+lookback = input.int(50, "Detection Period", minval=20, maxval=200, group=g1)
+sensitivity = input.float(0.002, "Sensitivity", minval=0.0005, maxval=0.01, step=0.0005, group=g1)
+min_touches = input.int(2, "Min Touch Points", minval=2, maxval=5, group=g1)
+
+g2 = "Classic Patterns"
+detect_classic = input.bool(true, "▼ Classic Patterns", group=g2)
+classic_double = input.bool(true, "├ Double Top/Bottom", group=g2)
+classic_triple = input.bool(true, "├ Triple Top/Bottom", group=g2)
+classic_hs = input.bool(true, "├ Head & Shoulders", group=g2)
+classic_rounding = input.bool(true, "└ Rounding Patterns", group=g2)
+
+g3 = "Triangle Patterns"
+detect_triangles = input.bool(true, "▼ Triangle Patterns", group=g3)
+tri_ascending = input.bool(true, "├ Ascending Triangle", group=g3)
+tri_descending = input.bool(true, "├ Descending Triangle", group=g3)
+tri_symmetrical = input.bool(true, "├ Symmetrical Triangle", group=g3)
+tri_expanding = input.bool(true, "└ Expanding Triangle", group=g3)
+
+g4 = "Continuation Patterns"
+detect_continuation = input.bool(true, "▼ Continuation Patterns", group=g4)
+cont_flag = input.bool(true, "├ Flags (4 types)", group=g4)
+cont_pennant = input.bool(true, "├ Pennants", group=g4)
+cont_wedge = input.bool(true, "├ Wedges (4 types)", group=g4)
+cont_channel = input.bool(true, "├ Channels (3 types)", group=g4)
+cont_rectangle = input.bool(true, "└ Rectangles", group=g4)
+
+g5 = "Harmonic Patterns"
+detect_harmonic = input.bool(true, "▼ Harmonic Patterns", group=g5)
+harm_gartley = input.bool(true, "├ Gartley", group=g5)
+harm_butterfly = input.bool(true, "├ Butterfly", group=g5)
+harm_bat = input.bool(true, "├ Bat", group=g5)
+harm_crab = input.bool(true, "├ Crab", group=g5)
+harm_shark = input.bool(true, "├ Shark", group=g5)
+harm_cypher = input.bool(true, "└ Cypher", group=g5)
+
+g6 = "Price Action"
+detect_price_action = input.bool(true, "▼ Price Action", group=g6)
+pa_pin_bar = input.bool(true, "├ Pin Bar", group=g6)
+pa_inside = input.bool(true, "├ Inside Bar", group=g6)
+pa_outside = input.bool(true, "├ Outside Bar", group=g6)
+pa_engulfing = input.bool(true, "├ Engulfing", group=g6)
+pa_doji = input.bool(true, "├ Doji Patterns", group=g6)
+pa_hammer = input.bool(true, "└ Hammer/Hanging Man", group=g6)
+
+g7 = "Special Patterns"
+detect_special = input.bool(true, "▼ Special Patterns", group=g7)
+spec_diamond = input.bool(true, "├ Diamond", group=g7)
+spec_cup = input.bool(true, "├ Cup & Handle", group=g7)
+spec_vbottom = input.bool(true, "├ V-Bottom/Top", group=g7)
+spec_broadening = input.bool(true, "├ Broadening", group=g7)
+spec_island = input.bool(true, "└ Island Reversal", group=g7)
+
+g8 = "Display Settings"
+show_patterns = input.bool(true, "Show Patterns", group=g8)
+show_confidence = input.bool(true, "Show Confidence", group=g8)
+show_table = input.bool(true, "Show Detection Table", group=g8)
+show_explanation = input.bool(true, "Show Detection Reasons", group=g8)
+show_pivot_points = input.bool(true, "Show Pivot Points", group=g8)
+show_key_levels = input.bool(true, "Show Key Levels", group=g8)
+show_targets = input.bool(true, "Show Target Prices", group=g8)
+max_patterns = input.int(5, "Max Display Count", minval=1, maxval=10, group=g8)
+
+g9 = "Panel Position Settings"
+table_position = input.string("top_right", "Detection Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=g9)
+explanation_position = input.string("middle_right", "Explanation Panel Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=g9)
+panel_transparency = input.int(80, "Panel Transparency", minval=0, maxval=100, group=g9)
+panel_text_size = input.string("normal", "Text Size", options=["tiny", "small", "normal", "large", "huge"], group=g9)
+
+// ============================================
+// GLOBAL VARIABLES & STRUCTURES
+// ============================================
+type PatternInfo
+    string name
+    string direction  // bullish/bearish/neutral
+    float confidence
+    int start_bar
+    int end_bar
+    float level1
+    float level2
+
+var array<PatternInfo> detected_patterns = array.new<PatternInfo>()
+var table pattern_table = na
+var table explanation_table = na
+var line[] pattern_lines = array.new_line()
+var label[] pattern_labels = array.new_label()
+var box[] pattern_boxes = array.new_box()
+
+// Position conversion function
+get_table_position(pos_string) =>
+    switch pos_string
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+
+// Table initialization
+if barstate.isfirst or barstate.isconfirmed
+    if not na(pattern_table)
+        table.delete(pattern_table)
+    if not na(explanation_table)
+        table.delete(explanation_table)
+    
+    if show_table
+        pattern_table := table.new(get_table_position(table_position), 4, max_patterns + 1, bgcolor=color.new(color.black, panel_transparency))
+    if show_explanation
+        explanation_table := table.new(get_table_position(explanation_position), 2, max_patterns + 1, bgcolor=color.new(color.black, panel_transparency), border_width=2)
+
+// ============================================
+// BASIC CALCULATIONS
+// ============================================
+highest_price = ta.highest(high, lookback)
+lowest_price = ta.lowest(low, lookback)
+mid_price = (highest_price + lowest_price) / 2
+
+// ATR for volatility
+atr = ta.atr(14)
+volatility = atr / close
+
+// ============================================
+// PATTERN DETECTION FUNCTIONS
+// ============================================
+
+// Pivot detection
+findPivotPoints(len) =>
+    var pivotHighs = array.new_float()
+    var pivotLows = array.new_float()
+    var pivotHighBars = array.new_int()
+    var pivotLowBars = array.new_int()
+    
+    for i = len to lookback - len
+        isHigh = true
+        isLow = true
+        for j = -len to len
+            if high[i+j] > high[i]
+                isHigh := false
+            if low[i+j] < low[i]
+                isLow := false
+        
+        if isHigh
+            array.push(pivotHighs, high[i])
+            array.push(pivotHighBars, i)
+        if isLow
+            array.push(pivotLows, low[i])
+            array.push(pivotLowBars, i)
+    
+    [pivotHighs, pivotLows, pivotHighBars, pivotLowBars]
+
+// Fibonacci ratio check
+checkFibRatio(val1, val2, target_ratio, tolerance) =>
+    ratio = val2 / val1
+    math.abs(ratio - target_ratio) < tolerance
+
+// 1. Double Top/Bottom Detection
+detectDoublePatterns() =>
+    if not detect_classic or not classic_double
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        [highs, lows, highBars, lowBars] = findPivotPoints(5)
+        
+        // Double Top
+        if array.size(highs) >= 2
+            for i = 0 to math.min(array.size(highs) - 2, 10)
+                h1 = array.get(highs, i)
+                h2 = array.get(highs, i + 1)
+                diff = math.abs(h1 - h2) / h1
+                
+                if diff < sensitivity
+                    neckline = lowest_price
+                    if close < neckline * 0.995
+                        PatternInfo.new("Double Top", "bearish", 85, bar_index - lookback, bar_index, h1, neckline)
+        
+        // Double Bottom
+        if array.size(lows) >= 2
+            for i = 0 to math.min(array.size(lows) - 2, 10)
+                l1 = array.get(lows, i)
+                l2 = array.get(lows, i + 1)
+                diff = math.abs(l1 - l2) / l1
+                
+                if diff < sensitivity
+                    neckline = highest_price
+                    if close > neckline * 1.005
+                        PatternInfo.new("Double Bottom", "bullish", 85, bar_index - lookback, bar_index, neckline, l1)
+        
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 2. Triple Top/Bottom
+detectTriplePatterns() =>
+    if not detect_classic or not classic_triple
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        [highs, lows, highBars, lowBars] = findPivotPoints(5)
+        
+        if array.size(highs) >= 3
+            for i = 0 to math.min(array.size(highs) - 3, 5)
+                h1 = array.get(highs, i)
+                h2 = array.get(highs, i + 1)
+                h3 = array.get(highs, i + 2)
+                
+                diff1 = math.abs(h1 - h2) / h1
+                diff2 = math.abs(h2 - h3) / h2
+                
+                if diff1 < sensitivity and diff2 < sensitivity
+                    PatternInfo.new("Triple Top", "bearish", 90, bar_index - lookback, bar_index, h1, lowest_price)
+        
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 3. Head & Shoulders
+detectHeadShoulders() =>
+    if not detect_classic or not classic_hs
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        [highs, lows, highBars, lowBars] = findPivotPoints(5)
+        
+        if array.size(highs) >= 3
+            for i = 0 to math.min(array.size(highs) - 3, 5)
+                left = array.get(highs, i)
+                head = array.get(highs, i + 1)
+                right = array.get(highs, i + 2)
+                
+                if head > left and head > right
+                    shoulder_diff = math.abs(left - right) / left
+                    if shoulder_diff < sensitivity * 2
+                        PatternInfo.new("Head & Shoulders", "bearish", 88, bar_index - lookback, bar_index, head, math.min(left, right))
+        
+        if array.size(highs) >= 5
+            for i = 0 to math.min(array.size(highs) - 5, 3)
+                ls1 = array.get(highs, i)
+                ls2 = array.get(highs, i + 1)
+                head = array.get(highs, i + 2)
+                rs1 = array.get(highs, i + 3)
+                rs2 = array.get(highs, i + 4)
+                
+                avg_left = (ls1 + ls2) / 2
+                avg_right = (rs1 + rs2) / 2
+                
+                if head > avg_left and head > avg_right
+                    PatternInfo.new("Complex H&S", "bearish", 82, bar_index - lookback, bar_index, head, math.min(avg_left, avg_right))
+        
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 4. Triangle Patterns
+detectTriangles() =>
+    if not detect_triangles
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        upper_trend = ta.linreg(high, lookback, 0) - ta.linreg(high, lookback, lookback - 1)
+        lower_trend = ta.linreg(low, lookback, 0) - ta.linreg(low, lookback, lookback - 1)
+        
+        range_start = highest_price - lowest_price
+        range_end = high - low
+        converging = range_end < range_start * 0.7
+        diverging = range_end > range_start * 1.3
+        
+        if tri_ascending and math.abs(upper_trend) < volatility and lower_trend > volatility and converging
+            PatternInfo.new("Ascending Triangle", "bullish", 78, bar_index - lookback, bar_index, highest_price, lowest_price)
+        else if tri_descending and upper_trend < -volatility and math.abs(lower_trend) < volatility and converging
+            PatternInfo.new("Descending Triangle", "bearish", 78, bar_index - lookback, bar_index, highest_price, lowest_price)
+        else if tri_symmetrical and math.abs(upper_trend + lower_trend) < volatility and converging
+            PatternInfo.new("Symmetrical Triangle", "neutral", 75, bar_index - lookback, bar_index, highest_price, lowest_price)
+        else if tri_expanding and diverging
+            PatternInfo.new("Expanding Triangle", "neutral", 72, bar_index - lookback, bar_index, highest_price, lowest_price)
+        else
+            PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 5. Wedge Patterns
+detectWedges() =>
+    if not detect_continuation or not cont_wedge
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        upper_slope = (highest_price - highest_price[lookback-1]) / lookback
+        lower_slope = (lowest_price - lowest_price[lookback-1]) / lookback
+        
+        converging = (high - low) < (highest_price[lookback-1] - lowest_price[lookback-1]) * 0.7
+        
+        if upper_slope > 0 and lower_slope > 0 and upper_slope < lower_slope and converging
+            PatternInfo.new("Rising Wedge", "bearish", 76, bar_index - lookback, bar_index, highest_price, lowest_price)
+        else if upper_slope < 0 and lower_slope < 0 and upper_slope < lower_slope and converging
+            PatternInfo.new("Falling Wedge", "bullish", 76, bar_index - lookback, bar_index, highest_price, lowest_price)
+        else if math.abs(upper_slope) > volatility * 2 and math.abs(lower_slope) > volatility * 2
+            if upper_slope > 0 and lower_slope < 0
+                PatternInfo.new("Broadening Rising Wedge", "bearish", 73, bar_index - lookback, bar_index, highest_price, lowest_price)
+            else if upper_slope < 0 and lower_slope > 0
+                PatternInfo.new("Broadening Falling Wedge", "bullish", 73, bar_index - lookback, bar_index, highest_price, lowest_price)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        else
+            PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 6. Flags & Pennants
+detectFlagsAndPennants() =>
+    if not detect_continuation or not (cont_flag or cont_pennant)
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        prior_trend = close[lookback] - close[lookback * 2]
+        recent_slope = ta.linreg(close, 10, 0) - ta.linreg(close, 10, 9)
+        recent_high = ta.highest(high, 10)
+        recent_low = ta.lowest(low, 10)
+        recent_range = recent_high - recent_low
+        prior_range = ta.highest(high, 20)[10] - ta.lowest(low, 20)[10]
+        
+        is_consolidation = recent_range < prior_range * 0.5
+        
+        if cont_flag and is_consolidation
+            if prior_trend > 0 and recent_slope < 0
+                PatternInfo.new("Bull Flag", "bullish", 74, bar_index - 10, bar_index, recent_high, recent_low)
+            else if prior_trend < 0 and recent_slope > 0
+                PatternInfo.new("Bear Flag", "bearish", 74, bar_index - 10, bar_index, recent_high, recent_low)
+            else if math.abs(recent_slope) < volatility
+                PatternInfo.new("Horizontal Flag", "neutral", 72, bar_index - 10, bar_index, recent_high, recent_low)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        
+        else if cont_pennant and is_consolidation and recent_range < recent_range[5] * 0.7
+            if prior_trend > 0
+                PatternInfo.new("Bull Pennant", "bullish", 73, bar_index - 10, bar_index, recent_high, recent_low)
+            else if prior_trend < 0
+                PatternInfo.new("Bear Pennant", "bearish", 73, bar_index - 10, bar_index, recent_high, recent_low)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        else
+            PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 7. Harmonic Patterns (simplified)
+detectHarmonicPatterns() =>
+    if not detect_harmonic
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        [highs, lows, highBars, lowBars] = findPivotPoints(5)
+        
+        if array.size(highs) >= 4 and array.size(lows) >= 3
+            X = array.get(lows, 0)
+            A = array.get(highs, 0)
+            B = array.get(lows, 1)
+            C = array.get(highs, 1)
+            D = close
+            
+            XA = A - X
+            AB = A - B
+            BC = C - B
+            CD = C - D
+            
+            if harm_gartley and checkFibRatio(XA, AB, 0.618, 0.05) and checkFibRatio(AB, BC, 0.786, 0.05)
+                PatternInfo.new("Gartley", "bullish", 80, bar_index - lookback, bar_index, C, D)
+            else if harm_butterfly and checkFibRatio(XA, AB, 0.786, 0.05) and checkFibRatio(AB, BC, 1.618, 0.1)
+                PatternInfo.new("Butterfly", "bullish", 78, bar_index - lookback, bar_index, C, D)
+            else if harm_bat and checkFibRatio(XA, AB, 0.382, 0.05) and checkFibRatio(AB, BC, 0.886, 0.05)
+                PatternInfo.new("Bat", "bullish", 77, bar_index - lookback, bar_index, C, D)
+            else if harm_crab and checkFibRatio(XA, AB, 0.618, 0.05) and checkFibRatio(AB, BC, 1.618, 0.1)
+                PatternInfo.new("Crab", "bullish", 76, bar_index - lookback, bar_index, C, D)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        else
+            PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 8. Price Action Patterns
+detectPriceAction() =>
+    if not detect_price_action
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        body = math.abs(close - open)
+        upper_shadow = high - math.max(open, close)
+        lower_shadow = math.min(open, close) - low
+        prev_body = math.abs(close[1] - open[1])
+        avg_body = ta.sma(math.abs(close - open), 20)
+        sma20 = ta.sma(close, 20)
+        
+        if pa_pin_bar and (upper_shadow > body * 2 or lower_shadow > body * 2)
+            direction = lower_shadow > upper_shadow ? "bullish" : "bearish"
+            PatternInfo.new("Pin Bar", direction, 70, bar_index, bar_index, high, low)
+        else if pa_inside and high < high[1] and low > low[1]
+            PatternInfo.new("Inside Bar", "neutral", 68, bar_index - 1, bar_index, high[1], low[1])
+        else if pa_outside and high > high[1] and low < low[1]
+            PatternInfo.new("Outside Bar", "neutral", 68, bar_index - 1, bar_index, high, low)
+        else if pa_engulfing and body > prev_body * 1.5
+            if close > open and close > high[1] and open < low[1]
+                PatternInfo.new("Bullish Engulfing", "bullish", 72, bar_index - 1, bar_index, high, low)
+            else if close < open and close < low[1] and open > high[1]
+                PatternInfo.new("Bearish Engulfing", "bearish", 72, bar_index - 1, bar_index, high, low)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        else if pa_doji and body < avg_body * 0.1
+            if upper_shadow > avg_body and lower_shadow > avg_body
+                PatternInfo.new("Doji", "neutral", 65, bar_index, bar_index, high, low)
+            else if upper_shadow > lower_shadow * 2
+                PatternInfo.new("Dragonfly Doji", "bullish", 66, bar_index, bar_index, high, low)
+            else if lower_shadow > upper_shadow * 2
+                PatternInfo.new("Gravestone Doji", "bearish", 66, bar_index, bar_index, high, low)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        else if pa_hammer and lower_shadow > body * 2 and upper_shadow < body * 0.3
+            if close > sma20
+                PatternInfo.new("Hammer", "bullish", 69, bar_index, bar_index, high, low)
+            else
+                PatternInfo.new("Hanging Man", "bearish", 69, bar_index, bar_index, high, low)
+        else
+            PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// 9. Special Patterns
+detectSpecialPatterns() =>
+    if not detect_special
+        PatternInfo.new("", "", 0, 0, 0, 0, 0)
+    else
+        if spec_cup
+            cup_depth = lowest_price[20] < lowest_price * 0.85
+            cup_recovery = close > highest_price[20] * 0.95
+            handle_forming = high < highest_price[5] * 0.98
+            
+            if cup_depth and cup_recovery and handle_forming
+                PatternInfo.new("Cup & Handle", "bullish", 82, bar_index - 30, bar_index, highest_price, lowest_price)
+        
+        if spec_vbottom
+            sharp_decline = lowest_price < lowest_price[10] * 0.9
+            sharp_recovery = close > highest_price[5] * 0.95
+            
+            if sharp_decline and sharp_recovery
+                PatternInfo.new("V-Bottom", "bullish", 75, bar_index - 10, bar_index, highest_price[10], lowest_price)
+            else if close < lowest_price[5] * 1.05 and highest_price > highest_price[10] * 1.1
+                PatternInfo.new("V-Top", "bearish", 75, bar_index - 10, bar_index, highest_price, lowest_price[10])
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        
+        else if spec_diamond
+            mid_expand = (ta.highest(high, 25)[12] - ta.lowest(low, 25)[12]) > (ta.highest(high, 50)[25] - ta.lowest(low, 50)[25]) * 1.2
+            end_contract = (high - low) < (ta.highest(high, 25)[12] - ta.lowest(low, 25)[12]) * 0.7
+            
+            if mid_expand and end_contract
+                PatternInfo.new("Diamond", "neutral", 77, bar_index - lookback, bar_index, highest_price, lowest_price)
+            else
+                PatternInfo.new("", "", 0, 0, 0, 0, 0)
+        else
+            PatternInfo.new("", "", 0, 0, 0, 0, 0)
+
+// ============================================
+// MAIN PROCESSING
+// ============================================
+
+// Clear detected patterns
+array.clear(detected_patterns)
+
+// Execute detection functions
+patterns_to_check = array.new<PatternInfo>()
+array.push(patterns_to_check, detectDoublePatterns())
+array.push(patterns_to_check, detectTriplePatterns())
+array.push(patterns_to_check, detectHeadShoulders())
+array.push(patterns_to_check, detectTriangles())
+array.push(patterns_to_check, detectWedges())
+array.push(patterns_to_check, detectFlagsAndPennants())
+array.push(patterns_to_check, detectHarmonicPatterns())
+array.push(patterns_to_check, detectPriceAction())
+array.push(patterns_to_check, detectSpecialPatterns())
+
+// Keep only valid patterns
+for i = 0 to array.size(patterns_to_check) - 1
+    pattern = array.get(patterns_to_check, i)
+    if pattern.name != ""
+        array.push(detected_patterns, pattern)
+
+// Sort by confidence (descending)
+if array.size(detected_patterns) > 1
+    for i = 0 to array.size(detected_patterns) - 2
+        for j = 0 to array.size(detected_patterns) - i - 2
+            if j + 1 < array.size(detected_patterns)
+                if array.get(detected_patterns, j).confidence < array.get(detected_patterns, j + 1).confidence
+                    temp = array.get(detected_patterns, j)
+                    array.set(detected_patterns, j, array.get(detected_patterns, j + 1))
+                    array.set(detected_patterns, j + 1, temp)
+
+// ============================================
+// VISUALIZATION
+// ============================================
+
+// Clear old drawings
+if barstate.islast
+    for line in pattern_lines
+        line.delete(line)
+    array.clear(pattern_lines)
+    
+    for lbl in pattern_labels
+        label.delete(lbl)
+    array.clear(pattern_labels)
+    
+    for bx in pattern_boxes
+        box.delete(bx)
+    array.clear(pattern_boxes)
+
+// Draw patterns
+if show_patterns and barstate.islast and array.size(detected_patterns) > 0
+    display_count = math.min(array.size(detected_patterns), max_patterns)
+    for i = 0 to display_count - 1
+        pattern = array.get(detected_patterns, i)
+        
+        // Color settings
+        pattern_color = switch pattern.direction
+            "bullish" => color.new(color.lime, 20)
+            "bearish" => color.new(color.red, 20)
+            => color.new(color.yellow, 20)
+        
+        // Target price calculation
+        float target_price = na
+        float target_distance = 0.0
+        string target_label_text = ""
+        
+        // Pattern-specific drawing
+        if str.contains(pattern.name, "Double") or str.contains(pattern.name, "Triple")
+            [highs, lows, highBars, lowBars] = findPivotPoints(5)
+            if array.size(highs) >= 2
+                for j = 0 to math.min(array.size(highs) - 1, 3)
+                    high_point = array.get(highs, j)
+                    high_bar = bar_index - array.get(highBars, j)
+                    circle_label = label.new(high_bar, high_point * 1.01, "●", color=color.new(color.red, 0), textcolor=color.red, style=label.style_label_center, size=size.tiny)
+                    array.push(pattern_labels, circle_label)
+            if array.size(lows) >= 2
+                for j = 0 to math.min(array.size(lows) - 1, 3)
+                    low_point = array.get(lows, j)
+                    low_bar = bar_index - array.get(lowBars, j)
+                    circle_label = label.new(low_bar, low_point * 0.99, "●", color=color.new(color.green, 0), textcolor=color.green, style=label.style_label_center, size=size.tiny)
+                    array.push(pattern_labels, circle_label)
+            
+            // Neckline
+            neckline = str.contains(pattern.name, "Top") ? pattern.level2 : pattern.level1
+            neck_line = line.new(pattern.start_bar, neckline, pattern.end_bar + 10, neckline, color=color.new(color.orange, 0), width=2, style=line.style_solid)
+            array.push(pattern_lines, neck_line)
+            neck_label = label.new(pattern.end_bar + 5, neckline, "Neckline", color=color.new(color.orange, 80), textcolor=color.white, style=label.style_label_left, size=size.tiny)
+            array.push(pattern_labels, neck_label)
+            
+            // Target calculation
+            if str.contains(pattern.name, "Top")
+                target_distance = pattern.level1 - neckline
+                target_price := neckline - target_distance
+                target_label_text := "Target ↓"
+            else
+                target_distance = neckline - pattern.level2
+                target_price := neckline + target_distance
+                target_label_text := "Target ↑"
+        
+        else if str.contains(pattern.name, "Triangle") or str.contains(pattern.name, "Wedge")
+            upper_line = line.new(pattern.start_bar, pattern.level1, pattern.end_bar, pattern.level1 - (pattern.level1 - pattern.level2) * 0.3, color=pattern_color, width=2, style=line.style_solid)
+            lower_line = line.new(pattern.start_bar, pattern.level2, pattern.end_bar, pattern.level2 + (pattern.level1 - pattern.level2) * 0.3, color=pattern_color, width=2, style=line.style_solid)
+            array.push(pattern_lines, upper_line)
+            array.push(pattern_lines, lower_line)
+            
+            convergence_label = label.new(pattern.end_bar + 5, (pattern.level1 + pattern.level2) / 2, str.contains(pattern.name, "Expanding") ? "Expanding→" : "←Converging→", color=color.new(pattern_color, 80), textcolor=color.white, style=label.style_label_center, size=size.tiny)
+            array.push(pattern_labels, convergence_label)
+            
+            // Target calculation
+            pattern_height = pattern.level1 - pattern.level2
+            if pattern.direction == "bullish"
+                target_price := pattern.level1 + pattern_height
+                target_label_text := "Target ↑"
+            else if pattern.direction == "bearish"
+                target_price := pattern.level2 - pattern_height
+                target_label_text := "Target ↓"
+            else
+                target_price := close > (pattern.level1 + pattern.level2) / 2 ? pattern.level1 + pattern_height : pattern.level2 - pattern_height
+                target_label_text := "Target"
+        
+        else if str.contains(pattern.name, "Head") and str.contains(pattern.name, "Shoulders")
+            [highs, lows, highBars, lowBars] = findPivotPoints(5)
+            if array.size(highs) >= 3
+                max_high_idx = 0
+                max_high_val = 0.0
+                for j = 0 to math.min(array.size(highs) - 1, 4)
+                    if array.get(highs, j) > max_high_val
+                        max_high_val := array.get(highs, j)
+                        max_high_idx := j
+                
+                head_bar = bar_index - array.get(highBars, max_high_idx)
+                head_label = label.new(head_bar, max_high_val * 1.01, "HEAD", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+                array.push(pattern_labels, head_label)
+                
+                for j = 0 to math.min(array.size(highs) - 1, 4)
+                    if j != max_high_idx
+                        shoulder_bar = bar_index - array.get(highBars, j)
+                        shoulder_val = array.get(highs, j)
+                        shoulder_label = label.new(shoulder_bar, shoulder_val * 1.01, "S", color=color.orange, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+                        array.push(pattern_labels, shoulder_label)
+                
+                // Target calculation
+                neckline_hs = pattern.level2
+                head_distance = max_high_val - neckline_hs
+                target_price := neckline_hs - head_distance
+                target_label_text := "Target ↓"
+        
+        else if str.contains(pattern.name, "Flag") or str.contains(pattern.name, "Pennant")
+            pole_start = pattern.start_bar - 20
+            pole_end = pattern.start_bar
+            pole_line = line.new(pole_start, lowest_price[20], pole_end, highest_price, color=color.new(color.blue, 50), width=3, style=line.style_solid)
+            array.push(pattern_lines, pole_line)
+            pole_label = label.new(pole_start, (highest_price + lowest_price[20]) / 2, "Pole", color=color.blue, textcolor=color.white, style=label.style_label_right, size=size.tiny)
+            array.push(pattern_labels, pole_label)
+            
+            flag_box = box.new(pattern.start_bar, pattern.level1, pattern.end_bar, pattern.level2, bgcolor=color.new(pattern_color, 90), border_color=pattern_color, border_width=2)
+            array.push(pattern_boxes, flag_box)
+            
+            // Target calculation
+            pole_height = highest_price - lowest_price[20]
+            if str.contains(pattern.name, "Bull")
+                target_price := pattern.level1 + pole_height
+                target_label_text := "Target ↑"
+            else if str.contains(pattern.name, "Bear")
+                target_price := pattern.level2 - pole_height
+                target_label_text := "Target ↓"
+        
+        else if str.contains(pattern.name, "Hammer") or str.contains(pattern.name, "Pin Bar")
+            body_box = box.new(bar_index - 1, math.max(open, close), bar_index, math.min(open, close), bgcolor=color.new(pattern_color, 50), border_color=pattern_color)
+            array.push(pattern_boxes, body_box)
+            
+            shadow_line = line.new(bar_index, high, bar_index, low, color=pattern_color, width=3, style=line.style_solid)
+            array.push(pattern_lines, shadow_line)
+            
+            shadow_ratio = str.contains(pattern.name, "Hammer") ? (math.min(open, close) - low) / math.abs(close - open) : (high - math.max(open, close)) / math.abs(close - open)
+            
+            ratio_label = label.new(bar_index, low * 0.99, "Shadow/Body: " + str.tostring(shadow_ratio, "#.#") + "x", color=pattern_color, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+            array.push(pattern_labels, ratio_label)
+            
+            // Target calculation
+            candle_range = high - low
+            if pattern.direction == "bullish"
+                target_price := close + candle_range * 2
+                target_label_text := "Target ↑"
+            else
+                target_price := close - candle_range * 2
+                target_label_text := "Target ↓"
+        
+        // Display target prices
+        if show_targets and not na(target_price)
+            target_box = box.new(bar_index, close, bar_index + 30, target_price, bgcolor=color.new(pattern.direction == "bullish" ? color.green : color.red, 95), border_color=pattern.direction == "bullish" ? color.green : color.red, border_width=1, border_style=line.style_dashed)
+            array.push(pattern_boxes, target_box)
+            
+            target_line = line.new(bar_index, target_price, bar_index + 30, target_price, color=pattern.direction == "bullish" ? color.green : color.red, width=2, style=line.style_dashed)
+            array.push(pattern_lines, target_line)
+            
+            price_change = target_price - close
+            price_change_percent = (price_change / close) * 100
+            target_text = target_label_text + "\n$" + str.tostring(target_price, "#,###.##") + "\n(" + str.tostring(price_change_percent, "+#.##") + "%)"
+            target_label = label.new(bar_index + 30, target_price, target_text, color=pattern.direction == "bullish" ? color.green : color.red, textcolor=color.white, style=pattern.direction == "bullish" ? label.style_label_up : label.style_label_down, size=size.normal)
+            array.push(pattern_labels, target_label)
+            
+            arrow_line = line.new(bar_index + 15, close, bar_index + 15, target_price, color=pattern.direction == "bullish" ? color.green : color.red, width=3, style=line.style_arrow_right)
+            array.push(pattern_lines, arrow_line)
+        
+        // Pattern name and confidence
+        if show_confidence
+            label_text = pattern.name + "\n" + str.tostring(pattern.confidence, "#") + "%"
+            main_label = label.new(bar_index + 2, high * (1 + 0.02 * i), label_text, color=pattern_color, textcolor=color.white, style=label.style_label_left, size=size.normal)
+            array.push(pattern_labels, main_label)
+
+// Explanation panel
+if show_explanation and barstate.islast
+    // Get text size
+    text_size_val = switch panel_text_size
+        "tiny" => size.tiny
+        "small" => size.small
+        "large" => size.large
+        "huge" => size.huge
+        => size.normal
+    
+    table.cell(explanation_table, 0, 0, "🔍 Detection Reason", bgcolor=color.new(color.purple, 30), text_color=color.white, text_size=size.large)
+    table.cell(explanation_table, 1, 0, "📊 Analysis", bgcolor=color.new(color.purple, 30), text_color=color.white, text_size=size.large)
+    
+    if array.size(detected_patterns) > 0
+        display_count = math.min(array.size(detected_patterns), max_patterns)
+        for i = 0 to display_count - 1
+            pattern = array.get(detected_patterns, i)
+            
+            explanation = ""
+            if str.contains(pattern.name, "Double Top")
+                explanation := "✓ Two peaks within " + str.tostring(sensitivity * 100, "#.#") + "% tolerance\n" +
+                              "✓ Neckline break confirmed\n" +
+                              "✓ Reversal signal active"
+            else if str.contains(pattern.name, "Double Bottom")
+                explanation := "✓ Two troughs within " + str.tostring(sensitivity * 100, "#.#") + "% tolerance\n" +
+                              "✓ Neckline breakout confirmed\n" +
+                              "✓ Reversal signal active"
+            else if str.contains(pattern.name, "Triangle")
+                range_compression = ((high - low) / (highest_price - lowest_price)) * 100
+                explanation := "✓ Range compressed " + str.tostring(100 - range_compression, "#") + "%\n" +
+                              "✓ Trendlines formed\n" +
+                              "✓ Awaiting breakout"
+            else if str.contains(pattern.name, "Head") and str.contains(pattern.name, "Shoulders")
+                explanation := "✓ Central peak (head) confirmed\n" +
+                              "✓ Shoulders are symmetrical\n" +
+                              "✓ Neckline established"
+            else if str.contains(pattern.name, "Flag")
+                explanation := "✓ Strong trend (pole) detected\n" +
+                              "✓ Consolidation phase confirmed\n" +
+                              "✓ Continuation pattern likely"
+            else if str.contains(pattern.name, "Wedge")
+                explanation := "✓ Price range converging\n" +
+                              "✓ Both trends same direction\n" +
+                              "✓ Reversal potential indicated"
+            else if str.contains(pattern.name, "Hammer")
+                explanation := "✓ Lower shadow 2x+ body size\n" +
+                              "✓ Minimal upper shadow\n" +
+                              "✓ Found at support level"
+            else if str.contains(pattern.name, "Engulfing")
+                explanation := "✓ Completely engulfs prior candle\n" +
+                              "✓ Body 1.5x+ larger\n" +
+                              "✓ Reversal signal confirmed"
+            else if str.contains(pattern.name, "Pin Bar")
+                explanation := "✓ Shadow 2x+ body size\n" +
+                              "✓ Appears at reversal point\n" +
+                              "✓ Shows pressure shift"
+            else if str.contains(pattern.name, "Inside")
+                explanation := "✓ Within prior bar's range\n" +
+                              "✓ Volatility decreasing\n" +
+                              "✓ Breakout preparation"
+            else if str.contains(pattern.name, "Outside")
+                explanation := "✓ Engulfs prior bar completely\n" +
+                              "✓ Volatility expanding\n" +
+                              "✓ Potential trend change"
+            else
+                explanation := "✓ Pattern conditions met\n" +
+                              "✓ Confidence: " + str.tostring(pattern.confidence, "#") + "%\n" +
+                              "✓ Direction: " + pattern.direction
+            
+            pattern_color = switch pattern.direction
+                "bullish" => color.new(color.lime, 20)
+                "bearish" => color.new(color.red, 20)
+                => color.new(color.yellow, 20)
+                
+            table.cell(explanation_table, 0, i + 1, pattern.name, bgcolor=pattern_color, text_color=color.white, text_size=text_size_val)
+            table.cell(explanation_table, 1, i + 1, explanation, bgcolor=color.new(color.black, 60), text_color=color.white, text_size=text_size_val)
+    else
+        table.cell(explanation_table, 0, 1, "Scanning...", text_color=color.gray, text_size=text_size_val)
+        table.cell(explanation_table, 1, 1, "No patterns detected", text_color=color.gray, text_size=text_size_val)
+
+// Table update
+if show_table and barstate.islast
+    table.cell(pattern_table, 0, 0, "Pattern", bgcolor=color.blue, text_color=color.white)
+    table.cell(pattern_table, 1, 0, "Direction", bgcolor=color.blue, text_color=color.white)
+    table.cell(pattern_table, 2, 0, "Confidence", bgcolor=color.blue, text_color=color.white)
+    table.cell(pattern_table, 3, 0, "Status", bgcolor=color.blue, text_color=color.white)
+    
+    if array.size(detected_patterns) > 0
+        display_count = math.min(array.size(detected_patterns), max_patterns)
+        for i = 0 to display_count - 1
+            pattern = array.get(detected_patterns, i)
+            
+            dir_color = switch pattern.direction
+                "bullish" => color.lime
+                "bearish" => color.red
+                => color.yellow
+            
+            conf_color = pattern.confidence >= 80 ? color.lime : pattern.confidence >= 70 ? color.yellow : color.gray
+            
+            table.cell(pattern_table, 0, i + 1, pattern.name, text_color=color.white)
+            table.cell(pattern_table, 1, i + 1, pattern.direction, text_color=dir_color)
+            table.cell(pattern_table, 2, i + 1, str.tostring(pattern.confidence, "#") + "%", text_color=conf_color)
+            table.cell(pattern_table, 3, i + 1, "Active", text_color=color.aqua)
+    else
+        table.cell(pattern_table, 0, 1, "No Pattern", text_color=color.gray)
+        table.cell(pattern_table, 1, 1, "-", text_color=color.gray)
+        table.cell(pattern_table, 2, 1, "-", text_color=color.gray)
+        table.cell(pattern_table, 3, 1, "Waiting", text_color=color.gray)
+
+// Background color
+bg_color = color(na)
+if array.size(detected_patterns) > 0
+    top_pattern = array.get(detected_patterns, 0)
+    bg_color := switch top_pattern.direction
+        "bullish" => color.new(color.green, 95)
+        "bearish" => color.new(color.red, 95)
+        => color.new(color.yellow, 95)
+
+bgcolor(bg_color)
+
+// S/R levels
+plot(highest_price, "Resistance", color=color.new(color.red, 80), linewidth=1, style=plot.style_stepline)
+plot(lowest_price, "Support", color=color.new(color.green, 80), linewidth=1, style=plot.style_stepline)
+plot(mid_price, "Midpoint", color=color.new(color.gray, 90), linewidth=1, style=plot.style_stepline)
+
+// Alerts
+if array.size(detected_patterns) > 0
+    top_pattern = array.get(detected_patterns, 0)
+    alert_msg = "Pattern Detected: " + top_pattern.name + " [" + top_pattern.direction + "] Confidence: " + str.tostring(top_pattern.confidence, "#") + "%"
+    if array.size(detected_patterns) > 1
+        alert_msg += " (+" + str.tostring(array.size(detected_patterns) - 1) + " more)"
+    alert(alert_msg, alert.freq_once_per_bar)
+
+// Alert conditions
+alertcondition(array.size(detected_patterns) > 0 and array.get(detected_patterns, 0).direction == "bullish", "Bullish Pattern", "Bullish pattern detected")
+alertcondition(array.size(detected_patterns) > 0 and array.get(detected_patterns, 0).direction == "bearish", "Bearish Pattern", "Bearish pattern detected")
+alertcondition(array.size(detected_patterns) > 0, "Any Pattern", "New pattern detected")
+

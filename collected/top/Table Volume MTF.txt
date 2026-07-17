@@ -1,0 +1,144 @@
+//@version=5
+indicator("Table Volume MTF", "Table Vol", overlay = true)
+
+// POSITION AND SIZE
+PosTable = input.string(defval="Bottom Right", title="Position", options=["Top Right", "Middle Right", "Bottom Right", "Top Center", "Middle Center", "Bottom Center", "Top Left", "Middle Left", "Bottom Left"], group="Table Location & Size", inline="1")
+SizTable = input.string(defval="Auto", title="Size", options=["Auto", "Huge", "Large", "Normal", "Small", "Tiny"], group="Table Location & Size", inline="1")
+
+Pos1Table = PosTable == "Top Right" ? position.top_right : PosTable == "Middle Right" ? position.middle_right : PosTable == "Bottom Right" ? position.bottom_right : PosTable == "Top Center" ? position.top_center : PosTable == "Middle Center" ? position.middle_center : PosTable == "Bottom Center" ? position.bottom_center : PosTable == "Top Left" ? position.top_left : PosTable == "Middle Left" ? position.middle_left : position.bottom_left
+Siz1Table = SizTable == "Auto" ? size.auto : SizTable == "Huge" ? size.huge : SizTable == "Large" ? size.large : SizTable == "Normal" ? size.normal : SizTable == "Small" ? size.small : size.tiny
+
+tbl = table.new(Pos1Table, 6, 8, frame_width=2, frame_color=color.rgb(0, 0, 0), border_width=1, border_color=color.rgb(0, 0, 0, 30))
+
+// TIMEFRAMES OPTIONS
+box01 = input.bool(true, "TF[01]", inline = "01", group="Select Timeframe")
+tf01  = input.timeframe("1", "",   inline = "01", group="Select Timeframe")
+
+box02 = input.bool(true, "TF[02]", inline = "02", group="Select Timeframe")
+tf02  = input.timeframe("5", "",   inline = "02", group="Select Timeframe")
+
+box03 = input.bool(true, "TF[03]", inline = "03", group="Select Timeframe")
+tf03  = input.timeframe("15", "",  inline = "03", group="Select Timeframe")
+
+box04 = input.bool(true, "TF[04]", inline = "04", group="Select Timeframe")
+tf04  = input.timeframe("60", "",  inline = "04", group="Select Timeframe")
+
+box05 = input.bool(true, "TF[05]", inline = "05", group="Select Timeframe")
+tf05  = input.timeframe("240", "", inline = "05", group="Select Timeframe")
+
+box06 = input.bool(true, "TF[06]", inline = "06", group="Select Timeframe")
+tf06  = input.timeframe("1D", "",  inline = "06", group="Select Timeframe")
+
+box07 = input.bool(true, "TF[07]", inline = "07", group="Select Timeframe")
+tf07  = input.timeframe("1W", "",  inline = "07", group="Select Timeframe")
+
+// DEFINITION OF VALUES
+symbol = ticker.modify(syminfo.tickerid, syminfo.session)
+tfArr  = array.new<string>(na)
+volArr = array.new<float>(na)
+buyArr = array.new<float>(na)
+sellArr = array.new<float>(na)
+countdownArr = array.new<string>(na)
+statusText= array.new<string>(na)
+// COUNTDOWN FUNCTION
+countdown(tf) =>
+    til_next = ((time_close(tf)/1000) - math.floor(timenow/1000))
+    next_day = math.floor(((til_next/60)/60)/24)
+    next_hour = math.floor((til_next/60)/60) - (next_day*24)
+    next_min = math.floor(til_next/60) - math.floor((til_next/60)/60)*60
+    next_sec = til_next - (math.floor(til_next/60)*60)
+    place0 = next_day == 0 ? "" : str.tostring(next_day, "00") + ":"
+    place1 = next_hour == 0 ? "" : str.tostring(next_hour, "00") + ":"
+    place2 = str.tostring(next_min, "00") + ":"
+    place3 = str.tostring(next_sec, "00")
+    // For 1 minute timeframe, only show seconds
+    if tf == "1"
+        str.tostring(next_sec, "00") + "s"
+    // For 5, 15 minute and 1 hour timeframes, show minutes and seconds
+    else if tf == "5" or tf == "15" or tf == "60"
+        str.tostring(next_min, "00") + ":" + str.tostring(next_sec, "00")
+    else
+        place0 + place1 + place2 + place3
+
+// VOLUME CALCULATION
+calculateVolume(tf, flg) =>
+    [vol, high_, low_, close_, time_] = request.security(symbol, tf, [volume, high, low, close, time])
+    float buyvolume = (high_ == low_) ? 0 : vol * (close_ - low_) / (high_ - low_)
+    float abssellvolume = (high_ == low_) ? 0 : vol * (high_ - close_) / (high_ - low_)
+    float sellvol = 0 - abssellvolume
+    float diffvol = buyvolume - abssellvolume
+    float deltavol = (diffvol > 0) ? (buyvolume / abssellvolume) : (sellvol / buyvolume)
+
+    totalVol = buyvolume + abssellvolume
+    buyPercent = (buyvolume / totalVol) * 100
+    sellPercent = (abssellvolume / totalVol) * 100
+
+    string countdown_value = countdown(tf)
+    string statustext = buyPercent > sellPercent ? "Bullish" : "Bearish"
+    if flg and (barstate.isrealtime ? true : timeframe.in_seconds(timeframe.period) <= timeframe.in_seconds(tf))
+        array.push(tfArr, na(tf) ? timeframe.period : tf)
+        array.push(volArr, vol)
+        array.push(buyArr, buyPercent)
+        array.push(sellArr, sellPercent)
+        array.push(countdownArr, countdown_value)
+        array.push(statusText, statustext)
+
+calculateVolume(tf01, box01)
+calculateVolume(tf02, box02)
+calculateVolume(tf03, box03)
+calculateVolume(tf04, box04)
+calculateVolume(tf05, box05)
+calculateVolume(tf06, box06)
+calculateVolume(tf07, box07)
+
+// HELPER FUNCTION TO FORMAT VOLUME
+formatVolume(vol) =>
+    volFormatted = vol >= 1000000 ? str.tostring(vol / 1000000, "#") + "M" :
+                   vol >= 1000 ? str.tostring(vol / 1000, "#") + "k" :
+                   str.tostring(vol, "#")
+    volFormatted
+
+// TABLE AND CELLS CONFIG
+// Post Timeframe in format 
+tfTxt(x) =>
+    out = x
+    if not str.contains(x, "S") and not str.contains(x, "M") and 
+       not str.contains(x, "W") and not str.contains(x, "D")
+        if str.tonumber(x) % 60 == 0
+            out := str.tostring(str.tonumber(x) / 60) + "H"
+        else 
+            out := x + "m"
+    out
+
+if barstate.islast
+    table.clear(tbl, 0, 0, 4, 7)
+
+    // TITLES
+    table.cell(tbl, 0, 0, "⏳CT", text_color=#000000, text_size=Siz1Table, bgcolor=#0883a1, text_halign=text.align_right, tooltip = "time left for the candle to close")
+    table.cell(tbl, 1, 0, "⏱TF", text_color=#000000, text_size=Siz1Table, bgcolor=#0883a1, text_halign=text.align_right, tooltip = "Time Period")
+    table.cell(tbl, 2, 0, "Vol", text_color=#000000, text_size=Siz1Table, bgcolor=#0883a1, tooltip = "Volume")
+    table.cell(tbl, 3, 0, "Buy (%)", text_color=#000000, text_size=Siz1Table, bgcolor=#0883a1)
+    table.cell(tbl, 4, 0, "Sell (%)", text_color=#000000, text_size=Siz1Table, bgcolor=#0883a1)
+    table.cell(tbl, 5, 0, "Status", text_color=#000000, text_size=Siz1Table, bgcolor=#0883a1)
+
+    j = 1
+    if array.size(buyArr) > 0
+        for i = 0 to array.size(buyArr) - 1
+            //config values in the cells
+            COUNTDOWN_VALUE = array.get(countdownArr, i)
+            TF_VALUE = array.get(tfArr, i)
+            VOL_VALUE = formatVolume(array.get(volArr, i))
+            BUY_VALUE = math.round(array.get(buyArr, i))
+            SELL_VALUE = math.round(array.get(sellArr, i))
+            STATUS_VALUE = array.get(statusText, i)
+
+            //config colors in the cells
+            cellColor = BUY_VALUE > SELL_VALUE ? #119108 : #ce0909
+
+            table.cell(tbl, 0, j, COUNTDOWN_VALUE, text_color=#000000, text_halign=text.align_right, text_size=Siz1Table, bgcolor=cellColor)
+            table.cell(tbl, 1, j, tfTxt(TF_VALUE), text_color=#000000, text_halign=text.align_right, text_size=Siz1Table, bgcolor=cellColor)
+            table.cell(tbl, 2, j, VOL_VALUE, text_color=#000000, text_halign=text.align_right, text_size=Siz1Table, bgcolor=cellColor)
+            table.cell(tbl, 3, j, str.tostring(BUY_VALUE, "#"), text_color=#000000, text_halign=text.align_right, text_size=Siz1Table, bgcolor=cellColor)
+            table.cell(tbl, 4, j, str.tostring(SELL_VALUE, "#"), text_color=#000000, text_halign=text.align_right, text_size=Siz1Table, bgcolor=cellColor)
+            table.cell(tbl, 5, j, STATUS_VALUE, text_color=#000000, text_halign=text.align_right, text_size=Siz1Table, bgcolor=cellColor)
+            j += 1

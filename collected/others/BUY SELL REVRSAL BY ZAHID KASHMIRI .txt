@@ -1,0 +1,56 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bcracker82
+
+//@version=6
+plot(close)
+indicator("Trend Direction with Neutral Zone (45-55) and Reversal Signals", overlay=true)
+
+// === Input Parameters ===
+rsiPeriod = input.int(14, title="RSI Period")
+neutralLower = input.int(45, title="Neutral Lower Bound")  // Lower bound of the neutral range
+neutralUpper = input.int(55, title="Neutral Upper Bound")  // Upper bound of the neutral range
+
+// === Trend Threshold Inputs ===
+bullishThreshold = input.int(55, title="Bullish Threshold")  // Threshold for bullish trend
+bearishThreshold = input.int(45, title="Bearish Threshold")  // Threshold for bearish trend
+
+// === RSI Calculation ===
+rsiValue = ta.rsi(close, rsiPeriod)
+
+// === Define Signal Locking States ===
+var bool hasBuySignal = false  // Initialize as false
+var bool hasSellSignal = false // Initialize as false
+
+// === Buy and Sell Conditions ===
+buySignal = rsiValue > bullishThreshold and not hasBuySignal
+sellSignal = rsiValue < bearishThreshold and not hasSellSignal
+
+// === Reversal Conditions ===
+bullishReversal = ta.crossover(rsiValue, neutralLower)  // RSI crossing up from below 45
+bearishReversal = ta.crossunder(rsiValue, neutralUpper)  // RSI crossing down from above 55
+
+// === Lock the Signals ===
+if buySignal
+    hasBuySignal := true
+    hasSellSignal := false
+
+if sellSignal
+    hasSellSignal := true
+    hasBuySignal := false
+
+// === Plot Buy and Sell Signals with Original Labels ===
+plotshape(series=buySignal, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY", size=size.small)
+plotshape(series=sellSignal, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL", size=size.small)
+
+// === Plot Reversal Signals (🔹🔸) ===
+plotshape(series=bullishReversal, title="Bullish Reversal", location=location.belowbar, color=color.blue, style=shape.labelup, text="🔹", size=size.tiny)
+plotshape(series=bearishReversal, title="Bearish Reversal", location=location.abovebar, color=color.orange, style=shape.labeldown, text="🔸", size=size.tiny)
+
+// === Bar Coloring for Trend ===
+trendDirection = rsiValue > bullishThreshold ? "Up" : rsiValue < bearishThreshold ? "Down" : "Neutral"
+barColor = trendDirection == "Up" ? color.green : trendDirection == "Down" ? color.red : color.blue
+barcolor(barColor)
+
+// === Plot Neutral Zone (Optional) ===
+hline(neutralLower, "Neutral Lower (45)", color=color.gray, linestyle=hline.style_dotted)
+hline(neutralUpper, "Neutral Upper (55)", color=color.gray, linestyle=hline.style_dotted)

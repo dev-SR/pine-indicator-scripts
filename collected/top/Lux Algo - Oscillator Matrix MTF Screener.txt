@@ -1,0 +1,261 @@
+//@version=5
+indicator("Lux Algo - Oscillator Matrix MTF Screener [6.0]", shorttitle = "Oscillator MTF Screener", overlay = true)
+
+// ==================== INPUTS ====================
+// Timeframe Inputs
+tf1  = input.timeframe("1",   "Timeframe 1",  group = "TIMEFRAMES")
+tf2  = input.timeframe("3",   "Timeframe 2",  group = "TIMEFRAMES")
+tf3  = input.timeframe("5",   "Timeframe 3",  group = "TIMEFRAMES")
+tf4  = input.timeframe("15",  "Timeframe 4",  group = "TIMEFRAMES")
+tf5  = input.timeframe("30",  "Timeframe 5",  group = "TIMEFRAMES")
+tf6  = input.timeframe("60",  "Timeframe 6",  group = "TIMEFRAMES")
+tf7  = input.timeframe("120", "Timeframe 7",  group = "TIMEFRAMES")
+tf8  = input.timeframe("240", "Timeframe 8",  group = "TIMEFRAMES")
+tf9  = input.timeframe("D",   "Timeframe 9",  group = "TIMEFRAMES")
+tf10 = input.timeframe("W",   "Timeframe 10", group = "TIMEFRAMES")
+
+// Indicator Settings
+mL    = input.int(7,  "Hyper Wave Length", minval = 5, maxval = 21, group = "SETTINGS")
+sL    = input.int(3,  "Signal Length",     minval = 2, maxval = 10, group = "SETTINGS")
+mfL   = input.int(35, "Money Flow Length", minval = 10, maxval = 55, group = "SETTINGS")
+mfS   = input.int(6,  "MF Smooth",         minval = 2, maxval = 10, group = "SETTINGS")
+rsF   = input.int(4,  "Reversal Factor",   minval = 1, maxval = 10, group = "SETTINGS")
+
+// Table Settings
+tablePos = input.string("Top Right", "Table Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"], group = "TABLE SETTINGS")
+tableSize = input.string("Normal", "Table Size", options = ["Tiny", "Small", "Normal", "Large"], group = "TABLE SETTINGS")
+
+// Colors
+bullColor = input.color(#089981, "Bullish Color", group = "COLORS")
+bearColor = input.color(#f23645, "Bearish Color", group = "COLORS")
+neutColor = input.color(#808080, "Neutral Color", group = "COLORS")
+bgColor   = input.color(#1e222d, "Background",    group = "COLORS")
+txtColor  = input.color(#ffffff, "Text Color",    group = "COLORS")
+
+// ==================== FUNCTIONS ====================
+getTablePos(pos) =>
+    switch pos
+        "Top Right"     => position.top_right
+        "Top Left"      => position.top_left
+        "Bottom Right"  => position.bottom_right
+        "Bottom Left"   => position.bottom_left
+        "Middle Right"  => position.middle_right
+        "Middle Left"   => position.middle_left
+
+getTableSize(sz) =>
+    switch sz
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+
+// Core Oscillator Calculation
+calcOsc(int len, int smt) =>
+    float hi = ta.highest(len)
+    float lo = ta.lowest(len)
+    float av = ta.sma(hl2, len)
+    float sig = ta.ema(ta.linreg((close - math.avg(hi, lo, av)) / (hi - lo) * 100, len, 0), smt)
+    float sgD = ta.sma(sig, 2)
+    [sig, sgD]
+
+// Money Flow Calculation
+calcMF(int len, int smt) =>
+    float mfi = ta.sma(ta.mfi(hl2, len) - 50, smt)
+    mfi
+
+// Reversal Detection
+calcReversal(float sig, float sgD, float mfi, int factor) =>
+    vMA  = ta.sma(volume, 7)
+    rsi  = ta.rsi(vMA, 7) - 50
+    
+    tMj  = volume > vMA * (factor != 10 ? 1 + (factor / 10.0) : 2.0)
+    tMn  = volume > vMA * (factor != 10 ? 0 + (factor / 10.0) : 2.0) and not tMj
+    
+    mjBL = tMj and sig < -factor and mfi < 0
+    mjBR = tMj and sig >  factor and mfi > 0
+    mnBL = tMn and sig < -20 and sig < sgD and rsi < -20
+    mnBR = tMn and sig >  20 and sig > sgD and rsi >  20
+    
+    [mjBL, mjBR, mnBL, mnBR]
+
+// Combined Signal Calculation
+calcSignals() =>
+    [sig, sgD] = calcOsc(mL, sL)
+    mfi = calcMF(mfL, mfS)
+    [mjBL, mjBR, mnBL, mnBR] = calcReversal(sig, sgD, mfi, rsF)
+    
+    // Trend Direction
+    trend = sig > sgD ? 1 : sig < sgD ? -1 : 0
+    
+    // Money Flow Direction
+    mfDir = mfi > 0 ? 1 : mfi < 0 ? -1 : 0
+    
+    // Confluence
+    conf = sig > 0 and mfi > 0 ? 1 : sig < 0 and mfi < 0 ? -1 : 0
+    
+    // Cross Signals
+    crossUp = ta.crossover(sig, sgD)
+    crossDn = ta.crossunder(sig, sgD)
+    
+    // Reversal Signals
+    revBull = mjBL or mnBL
+    revBear = mjBR or mnBR
+    
+    [sig, sgD, mfi, trend, mfDir, conf, crossUp, crossDn, revBull, revBear]
+
+// ==================== MTF DATA RETRIEVAL ====================
+[sig1,  sgD1,  mfi1,  trend1,  mfDir1,  conf1,  crossUp1,  crossDn1,  revBull1,  revBear1]  = request.security(syminfo.tickerid, tf1,  calcSignals())
+[sig2,  sgD2,  mfi2,  trend2,  mfDir2,  conf2,  crossUp2,  crossDn2,  revBull2,  revBear2]  = request.security(syminfo.tickerid, tf2,  calcSignals())
+[sig3,  sgD3,  mfi3,  trend3,  mfDir3,  conf3,  crossUp3,  crossDn3,  revBull3,  revBear3]  = request.security(syminfo.tickerid, tf3,  calcSignals())
+[sig4,  sgD4,  mfi4,  trend4,  mfDir4,  conf4,  crossUp4,  crossDn4,  revBull4,  revBear4]  = request.security(syminfo.tickerid, tf4,  calcSignals())
+[sig5,  sgD5,  mfi5,  trend5,  mfDir5,  conf5,  crossUp5,  crossDn5,  revBull5,  revBear5]  = request.security(syminfo.tickerid, tf5,  calcSignals())
+[sig6,  sgD6,  mfi6,  trend6,  mfDir6,  conf6,  crossUp6,  crossDn6,  revBull6,  revBear6]  = request.security(syminfo.tickerid, tf6,  calcSignals())
+[sig7,  sgD7,  mfi7,  trend7,  mfDir7,  conf7,  crossUp7,  crossDn7,  revBull7,  revBear7]  = request.security(syminfo.tickerid, tf7,  calcSignals())
+[sig8,  sgD8,  mfi8,  trend8,  mfDir8,  conf8,  crossUp8,  crossDn8,  revBull8,  revBear8]  = request.security(syminfo.tickerid, tf8,  calcSignals())
+[sig9,  sgD9,  mfi9,  trend9,  mfDir9,  conf9,  crossUp9,  crossDn9,  revBull9,  revBear9]  = request.security(syminfo.tickerid, tf9,  calcSignals())
+[sig10, sgD10, mfi10, trend10, mfDir10, conf10, crossUp10, crossDn10, revBull10, revBear10] = request.security(syminfo.tickerid, tf10, calcSignals())
+
+// ==================== TABLE CREATION ====================
+var table mtfTable = table.new(getTablePos(tablePos), 8, 12, bgcolor = bgColor, border_width = 1, border_color = color.gray)
+
+getTrendIcon(t) => t == 1 ? "▲" : t == -1 ? "▼" : "●"
+getTrendColor(t) => t == 1 ? bullColor : t == -1 ? bearColor : neutColor
+
+getConfText(c) => c == 1 ? "BULL" : c == -1 ? "BEAR" : "NEUT"
+getConfColor(c) => c == 1 ? bullColor : c == -1 ? bearColor : neutColor
+
+getSignalText(crossUp, crossDn, revBull, revBear) =>
+    crossUp ? "⬆ CROSS UP" : crossDn ? "⬇ CROSS DN" : revBull ? "🔺 REV BULL" : revBear ? "🔻 REV BEAR" : "—"
+
+getSignalColor(crossUp, crossDn, revBull, revBear) =>
+    crossUp ? bullColor : crossDn ? bearColor : revBull ? bullColor : revBear ? bearColor : neutColor
+
+getMFText(mf) => mf > 20 ? "STRONG ▲" : mf > 0 ? "WEAK ▲" : mf < -20 ? "STRONG ▼" : mf < 0 ? "WEAK ▼" : "NEUTRAL"
+getMFColor(mf) => mf > 0 ? bullColor : mf < 0 ? bearColor : neutColor
+
+getOscValue(sig) => str.tostring(sig, "#.#")
+
+if barstate.islast
+    tSize = getTableSize(tableSize)
+    
+    // Headers
+    table.cell(mtfTable, 0, 0, "TF",        text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 1, 0, "OSC",       text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 2, 0, "TREND",     text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 3, 0, "MF VALUE",  text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 4, 0, "MF DIR",    text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 5, 0, "CONF",      text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 6, 0, "SIGNAL",    text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    table.cell(mtfTable, 7, 0, "STRENGTH",  text_color = txtColor, text_size = tSize, bgcolor = color.new(bgColor, 50))
+    
+    // TF1
+    table.cell(mtfTable, 0, 1,  tf1, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 1,  getOscValue(sig1), text_color = getTrendColor(trend1), text_size = tSize)
+    table.cell(mtfTable, 2, 1,  getTrendIcon(trend1), text_color = getTrendColor(trend1), text_size = tSize)
+    table.cell(mtfTable, 3, 1,  str.tostring(mfi1, "#.#"), text_color = getMFColor(mfi1), text_size = tSize)
+    table.cell(mtfTable, 4, 1,  getMFText(mfi1), text_color = getMFColor(mfi1), text_size = tSize)
+    table.cell(mtfTable, 5, 1,  getConfText(conf1), text_color = getConfColor(conf1), text_size = tSize)
+    table.cell(mtfTable, 6, 1,  getSignalText(crossUp1, crossDn1, revBull1, revBear1), text_color = getSignalColor(crossUp1, crossDn1, revBull1, revBear1), text_size = tSize)
+    table.cell(mtfTable, 7, 1,  str.tostring(math.abs(sig1), "#") + "%", text_color = getTrendColor(trend1), text_size = tSize)
+    
+    // TF2
+    table.cell(mtfTable, 0, 2,  tf2, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 2,  getOscValue(sig2), text_color = getTrendColor(trend2), text_size = tSize)
+    table.cell(mtfTable, 2, 2,  getTrendIcon(trend2), text_color = getTrendColor(trend2), text_size = tSize)
+    table.cell(mtfTable, 3, 2,  str.tostring(mfi2, "#.#"), text_color = getMFColor(mfi2), text_size = tSize)
+    table.cell(mtfTable, 4, 2,  getMFText(mfi2), text_color = getMFColor(mfi2), text_size = tSize)
+    table.cell(mtfTable, 5, 2,  getConfText(conf2), text_color = getConfColor(conf2), text_size = tSize)
+    table.cell(mtfTable, 6, 2,  getSignalText(crossUp2, crossDn2, revBull2, revBear2), text_color = getSignalColor(crossUp2, crossDn2, revBull2, revBear2), text_size = tSize)
+    table.cell(mtfTable, 7, 2,  str.tostring(math.abs(sig2), "#") + "%", text_color = getTrendColor(trend2), text_size = tSize)
+    
+    // TF3
+    table.cell(mtfTable, 0, 3,  tf3, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 3,  getOscValue(sig3), text_color = getTrendColor(trend3), text_size = tSize)
+    table.cell(mtfTable, 2, 3,  getTrendIcon(trend3), text_color = getTrendColor(trend3), text_size = tSize)
+    table.cell(mtfTable, 3, 3,  str.tostring(mfi3, "#.#"), text_color = getMFColor(mfi3), text_size = tSize)
+    table.cell(mtfTable, 4, 3,  getMFText(mfi3), text_color = getMFColor(mfi3), text_size = tSize)
+    table.cell(mtfTable, 5, 3,  getConfText(conf3), text_color = getConfColor(conf3), text_size = tSize)
+    table.cell(mtfTable, 6, 3,  getSignalText(crossUp3, crossDn3, revBull3, revBear3), text_color = getSignalColor(crossUp3, crossDn3, revBull3, revBear3), text_size = tSize)
+    table.cell(mtfTable, 7, 3,  str.tostring(math.abs(sig3), "#") + "%", text_color = getTrendColor(trend3), text_size = tSize)
+    
+    // TF4
+    table.cell(mtfTable, 0, 4,  tf4, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 4,  getOscValue(sig4), text_color = getTrendColor(trend4), text_size = tSize)
+    table.cell(mtfTable, 2, 4,  getTrendIcon(trend4), text_color = getTrendColor(trend4), text_size = tSize)
+    table.cell(mtfTable, 3, 4,  str.tostring(mfi4, "#.#"), text_color = getMFColor(mfi4), text_size = tSize)
+    table.cell(mtfTable, 4, 4,  getMFText(mfi4), text_color = getMFColor(mfi4), text_size = tSize)
+    table.cell(mtfTable, 5, 4,  getConfText(conf4), text_color = getConfColor(conf4), text_size = tSize)
+    table.cell(mtfTable, 6, 4,  getSignalText(crossUp4, crossDn4, revBull4, revBear4), text_color = getSignalColor(crossUp4, crossDn4, revBull4, revBear4), text_size = tSize)
+    table.cell(mtfTable, 7, 4,  str.tostring(math.abs(sig4), "#") + "%", text_color = getTrendColor(trend4), text_size = tSize)
+    
+    // TF5
+    table.cell(mtfTable, 0, 5,  tf5, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 5,  getOscValue(sig5), text_color = getTrendColor(trend5), text_size = tSize)
+    table.cell(mtfTable, 2, 5,  getTrendIcon(trend5), text_color = getTrendColor(trend5), text_size = tSize)
+    table.cell(mtfTable, 3, 5,  str.tostring(mfi5, "#.#"), text_color = getMFColor(mfi5), text_size = tSize)
+    table.cell(mtfTable, 4, 5,  getMFText(mfi5), text_color = getMFColor(mfi5), text_size = tSize)
+    table.cell(mtfTable, 5, 5,  getConfText(conf5), text_color = getConfColor(conf5), text_size = tSize)
+    table.cell(mtfTable, 6, 5,  getSignalText(crossUp5, crossDn5, revBull5, revBear5), text_color = getSignalColor(crossUp5, crossDn5, revBull5, revBear5), text_size = tSize)
+    table.cell(mtfTable, 7, 5,  str.tostring(math.abs(sig5), "#") + "%", text_color = getTrendColor(trend5), text_size = tSize)
+    
+    // TF6
+    table.cell(mtfTable, 0, 6,  tf6, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 6,  getOscValue(sig6), text_color = getTrendColor(trend6), text_size = tSize)
+    table.cell(mtfTable, 2, 6,  getTrendIcon(trend6), text_color = getTrendColor(trend6), text_size = tSize)
+    table.cell(mtfTable, 3, 6,  str.tostring(mfi6, "#.#"), text_color = getMFColor(mfi6), text_size = tSize)
+    table.cell(mtfTable, 4, 6,  getMFText(mfi6), text_color = getMFColor(mfi6), text_size = tSize)
+    table.cell(mtfTable, 5, 6,  getConfText(conf6), text_color = getConfColor(conf6), text_size = tSize)
+    table.cell(mtfTable, 6, 6,  getSignalText(crossUp6, crossDn6, revBull6, revBear6), text_color = getSignalColor(crossUp6, crossDn6, revBull6, revBear6), text_size = tSize)
+    table.cell(mtfTable, 7, 6,  str.tostring(math.abs(sig6), "#") + "%", text_color = getTrendColor(trend6), text_size = tSize)
+    
+    // TF7
+    table.cell(mtfTable, 0, 7,  tf7, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 7,  getOscValue(sig7), text_color = getTrendColor(trend7), text_size = tSize)
+    table.cell(mtfTable, 2, 7,  getTrendIcon(trend7), text_color = getTrendColor(trend7), text_size = tSize)
+    table.cell(mtfTable, 3, 7,  str.tostring(mfi7, "#.#"), text_color = getMFColor(mfi7), text_size = tSize)
+    table.cell(mtfTable, 4, 7,  getMFText(mfi7), text_color = getMFColor(mfi7), text_size = tSize)
+    table.cell(mtfTable, 5, 7,  getConfText(conf7), text_color = getConfColor(conf7), text_size = tSize)
+    table.cell(mtfTable, 6, 7,  getSignalText(crossUp7, crossDn7, revBull7, revBear7), text_color = getSignalColor(crossUp7, crossDn7, revBull7, revBear7), text_size = tSize)
+    table.cell(mtfTable, 7, 7,  str.tostring(math.abs(sig7), "#") + "%", text_color = getTrendColor(trend7), text_size = tSize)
+    
+    // TF8
+    table.cell(mtfTable, 0, 8,  tf8, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 8,  getOscValue(sig8), text_color = getTrendColor(trend8), text_size = tSize)
+    table.cell(mtfTable, 2, 8,  getTrendIcon(trend8), text_color = getTrendColor(trend8), text_size = tSize)
+    table.cell(mtfTable, 3, 8,  str.tostring(mfi8, "#.#"), text_color = getMFColor(mfi8), text_size = tSize)
+    table.cell(mtfTable, 4, 8,  getMFText(mfi8), text_color = getMFColor(mfi8), text_size = tSize)
+    table.cell(mtfTable, 5, 8,  getConfText(conf8), text_color = getConfColor(conf8), text_size = tSize)
+    table.cell(mtfTable, 6, 8,  getSignalText(crossUp8, crossDn8, revBull8, revBear8), text_color = getSignalColor(crossUp8, crossDn8, revBull8, revBear8), text_size = tSize)
+    table.cell(mtfTable, 7, 8,  str.tostring(math.abs(sig8), "#") + "%", text_color = getTrendColor(trend8), text_size = tSize)
+    
+    // TF9
+    table.cell(mtfTable, 0, 9,  tf9, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 9,  getOscValue(sig9), text_color = getTrendColor(trend9), text_size = tSize)
+    table.cell(mtfTable, 2, 9,  getTrendIcon(trend9), text_color = getTrendColor(trend9), text_size = tSize)
+    table.cell(mtfTable, 3, 9,  str.tostring(mfi9, "#.#"), text_color = getMFColor(mfi9), text_size = tSize)
+    table.cell(mtfTable, 4, 9,  getMFText(mfi9), text_color = getMFColor(mfi9), text_size = tSize)
+    table.cell(mtfTable, 5, 9,  getConfText(conf9), text_color = getConfColor(conf9), text_size = tSize)
+    table.cell(mtfTable, 6, 9,  getSignalText(crossUp9, crossDn9, revBull9, revBear9), text_color = getSignalColor(crossUp9, crossDn9, revBull9, revBear9), text_size = tSize)
+    table.cell(mtfTable, 7, 9,  str.tostring(math.abs(sig9), "#") + "%", text_color = getTrendColor(trend9), text_size = tSize)
+    
+    // TF10
+    table.cell(mtfTable, 0, 10, tf10, text_color = txtColor, text_size = tSize)
+    table.cell(mtfTable, 1, 10, getOscValue(sig10), text_color = getTrendColor(trend10), text_size = tSize)
+    table.cell(mtfTable, 2, 10, getTrendIcon(trend10), text_color = getTrendColor(trend10), text_size = tSize)
+    table.cell(mtfTable, 3, 10, str.tostring(mfi10, "#.#"), text_color = getMFColor(mfi10), text_size = tSize)
+    table.cell(mtfTable, 4, 10, getMFText(mfi10), text_color = getMFColor(mfi10), text_size = tSize)
+    table.cell(mtfTable, 5, 10, getConfText(conf10), text_color = getConfColor(conf10), text_size = tSize)
+    table.cell(mtfTable, 6, 10, getSignalText(crossUp10, crossDn10, revBull10, revBear10), text_color = getSignalColor(crossUp10, crossDn10, revBull10, revBear10), text_size = tSize)
+    table.cell(mtfTable, 7, 10, str.tostring(math.abs(sig10), "#") + "%", text_color = getTrendColor(trend10), text_size = tSize)
+    
+    // Summary Row
+    bullCount = (trend1 == 1 ? 1 : 0) + (trend2 == 1 ? 1 : 0) + (trend3 == 1 ? 1 : 0) + (trend4 == 1 ? 1 : 0) + (trend5 == 1 ? 1 : 0) + (trend6 == 1 ? 1 : 0) + (trend7 == 1 ? 1 : 0) + (trend8 == 1 ? 1 : 0) + (trend9 == 1 ? 1 : 0) + (trend10 == 1 ? 1 : 0)
+    bearCount = (trend1 == -1 ? 1 : 0) + (trend2 == -1 ? 1 : 0) + (trend3 == -1 ? 1 : 0) + (trend4 == -1 ? 1 : 0) + (trend5 == -1 ? 1 : 0) + (trend6 == -1 ? 1 : 0) + (trend7 == -1 ? 1 : 0) + (trend8 == -1 ? 1 : 0) + (trend9 == -1 ? 1 : 0) + (trend10 == -1 ? 1 : 0)
+    
+    summaryColor = bullCount > bearCount ? bullColor : bearCount > bullCount ? bearColor : neutColor
+    summaryText = bullCount > bearCount ? "BULLISH BIAS" : bearCount > bullCount ? "BEARISH BIAS" : "NEUTRAL"
+    
+    table.cell(mtfTable, 0, 11, "OVERALL", text_color = txtColor, text_size = tSize, bgcolor = color.new(summaryColor, 70))
+    table.cell(mtfTable, 1, 11, str.tostring(bullCount) + "▲ / " + str.tostring(bearCount) + "▼", text_color = summaryColor, text_size = tSize, bgcolor = color.new(summaryColor, 70))
+    table.merge_cells(mtfTable, 2, 11, 7, 11)
+    table.cell(mtfTable, 2, 11, summaryText, text_color = summaryColor, text_size = tSize, bgcolor = color.new(summaryColor, 70))

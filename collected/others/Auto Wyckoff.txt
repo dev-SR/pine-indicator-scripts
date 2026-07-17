@@ -1,0 +1,228 @@
+//@version=5
+//t.me/eyops
+indicator("Auto Wyckoff", overlay=true)
+
+// Input for swing detection sensitivity
+Length = input.int(10, "Bars to Detect Swings", minval=3, tooltip="Number of past bars to analyze for swings")
+
+// Detect swing highs and lows
+swingHigh = ta.pivothigh(high, Length, Length)
+swingLow = ta.pivotlow(low, Length, Length)
+
+
+// Define color inputs for the rectangle
+boxColor = input.color(color.red, "Rectangle Color", tooltip="Color for the rectangle around the detected pattern")
+textcolor = input.color(color.white, "Text Color", tooltip="Text Color")
+borderWidth = input.int(1, "Rectangle Border Width", minval=1, maxval=5, tooltip="Width of the rectangle borders")
+
+
+
+
+// Variables to track swings
+var float previousSwingHigh = na
+var float previousSwingLow = na
+
+// Detect Higher High (HH) and Lower High (LH)
+isHigherHigh = not na(swingHigh) and not na(previousSwingHigh) and swingHigh > previousSwingHigh
+isLowerHigh = not na(swingHigh) and not na(previousSwingHigh) and swingHigh < previousSwingHigh
+
+// Detect Lower Low (LL) and Higher Low (HL)
+isLowerLow = not na(swingLow) and not na(previousSwingLow) and swingLow < previousSwingLow
+isHigherLow = not na(swingLow) and not na(previousSwingLow) and swingLow > previousSwingLow
+
+// Update previous swings
+if not na(swingHigh)
+    previousSwingHigh := swingHigh
+if not na(swingLow)
+    previousSwingLow := swingLow
+
+
+
+// Variables to track swing lows
+var float firstSwingLow = na
+var float secondSwingLow = na
+var float thirdSwingLow = na
+var float fourthSwingLow = na
+
+// Variables to track bar indices for swing lows
+var int firstSwingLowBar = na
+var int secondSwingLowBar = na
+var int thirdSwingLowBar = na
+var int fourthSwingLowBar = na
+
+// Variables to track swing highs
+var float detectedSwingHigh = na
+var int detectedSwingHighBar = na
+
+// Variables to track swing highs
+var float firstSwingHigh = na
+var float secondSwingHigh = na
+var float thirdSwingHigh = na
+var float fourthSwingHigh = na
+
+// Variables to track bar indices for swing highs
+var int firstSwingHighBar = na
+var int secondSwingHighBar = na
+var int thirdSwingHighBar = na
+var int fourthSwingHighBar = na
+
+// Variables to track swing lows
+var float detectedSwingLow = na
+var int detectedSwingLowBar = na
+
+
+// Flags to lock state
+var bool patternLocked = na
+
+var float lastAccumulationBar = na
+var float lastDistributionBar = na
+var int cooldownPeriod = 100
+
+var int cnt = 0
+
+// Step 1: Track swing lows sequentially when the pattern is not locked
+if not na(swingLow) and not patternLocked
+    fourthSwingLow := thirdSwingLow
+    fourthSwingLowBar := thirdSwingLowBar
+    thirdSwingLow := secondSwingLow
+    thirdSwingLowBar := secondSwingLowBar
+    secondSwingLow := firstSwingLow
+    secondSwingLowBar := firstSwingLowBar
+    firstSwingLow := swingLow
+    firstSwingLowBar := bar_index - Length
+
+
+// Step 1: Track swing highs sequentially when the pattern is not locked
+if not na(swingHigh) and not patternLocked
+    fourthSwingHigh := thirdSwingHigh
+    fourthSwingHighBar := thirdSwingHighBar
+    thirdSwingHigh := secondSwingHigh
+    thirdSwingHighBar := secondSwingHighBar
+    secondSwingHigh := firstSwingHigh
+    secondSwingHighBar := firstSwingHighBar
+    firstSwingHigh := swingHigh
+    firstSwingHighBar := bar_index - Length
+
+
+
+
+/// Acumulation Pattern
+
+// Step 2: Detect four consecutive lower swing lows
+fourLowsDetected = not na(firstSwingLow) and not na(secondSwingLow) and not na(thirdSwingLow) and not na(fourthSwingLow) and firstSwingLow < secondSwingLow and secondSwingLow < thirdSwingLow and thirdSwingLow < fourthSwingLow and firstSwingLowBar > secondSwingLowBar and secondSwingLowBar > thirdSwingLowBar and thirdSwingLowBar > fourthSwingLowBar
+// Step 2: Detect four consecutive higher swing highs
+fourHighsDetected = not na(firstSwingHigh) and not na(secondSwingHigh) and not na(thirdSwingHigh) and not na(fourthSwingHigh) and firstSwingHigh > secondSwingHigh and secondSwingHigh > thirdSwingHigh and thirdSwingHigh > fourthSwingHigh and firstSwingHighBar > secondSwingHighBar and secondSwingHighBar > thirdSwingHighBar and thirdSwingHighBar > fourthSwingHighBar
+
+// Step 3: Detect a higher swing high after three swing lows
+if fourLowsDetected and not patternLocked and not na(swingHigh)
+    detectedSwingHigh := swingHigh
+    detectedSwingHighBar := bar_index - Length
+
+    // Check if the detected swing high is higher than the third swing low
+    if detectedSwingHigh > thirdSwingLow and isHigherHigh and (firstSwingHigh > secondSwingHigh and firstSwingHighBar > secondSwingHighBar) and close > secondSwingHigh
+        patternLocked := true // Lock the pattern
+
+
+
+
+        // Add labels for each swing low with specified names and colors
+        label.new(firstSwingLowBar, firstSwingLow, "spring", color=color.new(#ff9800, 100), style=label.style_label_up, textcolor=textcolor)
+        label.new(secondSwingLowBar, secondSwingLow, "st(b)", color=color.new(#ff9800, 100), style=label.style_label_up, textcolor=textcolor)
+        label.new(thirdSwingLowBar, thirdSwingLow, "st", color=color.new(#f44336, 100), style=label.style_label_up, textcolor=textcolor)
+        label.new(fourthSwingLowBar, fourthSwingLow, "sc", color=color.new(#2196f3, 100), style=label.style_label_up, textcolor=textcolor)
+       // Mark the detected swing high as SOS
+        label.new(detectedSwingHighBar, detectedSwingHigh, "SOS", color=color.new(#ffeb3b, 100), style=label.style_label_down, textcolor=textcolor)
+
+
+        // Calculate the midpoint for the label
+        midpointBar = math.floor((fourthSwingLowBar + detectedSwingHighBar) / 2)
+        midpointPrice = (detectedSwingHigh + firstSwingLow) / 2
+                // Add the label in the middle of the rectangle and above it
+        label.new(midpointBar, detectedSwingHigh + 1, "Accumulation", color=color.new(color.red, 100), style=label.style_label_down, textcolor=textcolor)
+
+        // Draw a rectangle around the detected pattern
+        line.new(fourthSwingLowBar, detectedSwingHigh, detectedSwingHighBar, detectedSwingHigh, width=borderWidth, color=boxColor) // Top border
+        line.new(fourthSwingLowBar, firstSwingLow, detectedSwingHighBar, firstSwingLow, width=borderWidth, color=boxColor)       // Bottom border
+        line.new(detectedSwingHighBar, detectedSwingHigh, detectedSwingHighBar, firstSwingLow, width=borderWidth, color=boxColor) // Right border
+        line.new(fourthSwingLowBar, detectedSwingHigh, fourthSwingLowBar, firstSwingLow, width=borderWidth, color=boxColor)       // Left border
+
+
+//// Distribution Pattern
+
+
+// Step 3: Detect a lower swing low after three swing highs
+if fourHighsDetected and not patternLocked and not na(swingLow)
+    detectedSwingLow := swingLow
+    detectedSwingLowBar := bar_index - Length
+
+    // Check if the detected swing low is lower than the third swing high
+    if detectedSwingLow < thirdSwingHigh and isLowerLow
+        patternLocked := true // Lock the pattern
+        
+
+        // Add labels for each swing high with specified names and colors
+        label.new(firstSwingHighBar, firstSwingHigh, "utad", color=color.new(#f44336, 100), style=label.style_label_down, textcolor=textcolor)
+        label.new(secondSwingHighBar, secondSwingHigh, "ut", color=color.new(#ff9800, 100), style=label.style_label_down, textcolor=textcolor)
+        label.new(thirdSwingHighBar, thirdSwingHigh, "st", color=color.new(#4caf50, 100), style=label.style_label_down, textcolor=textcolor)
+        label.new(fourthSwingHighBar, fourthSwingHigh, "bc", color=color.new(#2196f3, 100), style=label.style_label_down, textcolor=textcolor)
+        // Mark the detected swing low as LPSY
+        label.new(detectedSwingLowBar, detectedSwingLow, "SOW", color=color.new(#ffeb3b, 100), style=label.style_label_up, textcolor=textcolor)
+
+        // Calculate the midpoint for the label
+        midpointBar = math.floor((fourthSwingHighBar + detectedSwingLowBar) / 2)
+        midpointPrice = firstSwingHigh + 1  // Position above the highest point of the schematic
+
+        // Add the label at the midpoint
+        label.new(midpointBar, midpointPrice, "Distribution", color=color.new(color.red, 100), style=label.style_label_down, textcolor=textcolor)
+
+
+        // Draw a rectangle around the detected pattern
+        line.new(fourthSwingHighBar, detectedSwingLow, detectedSwingLowBar, detectedSwingLow, width=borderWidth, color=boxColor) // Bottom border
+        line.new(fourthSwingHighBar, firstSwingHigh, detectedSwingLowBar, firstSwingHigh, width=borderWidth, color=boxColor)     // Top border
+        line.new(detectedSwingLowBar, detectedSwingLow, detectedSwingLowBar, firstSwingHigh, width=borderWidth, color=boxColor) // Right border
+        line.new(fourthSwingHighBar, detectedSwingLow, fourthSwingHighBar, firstSwingHigh, width=borderWidth, color=boxColor)   // Left border
+
+
+/// Reset
+
+if patternLocked
+    cnt := cnt + 1
+
+// Step 4: Reset lock for new patterns
+if cnt >= 50 and patternLocked and na(swingHigh) and na(swingLow)
+    patternLocked := false
+    // Reset swing lows
+    firstSwingLow := na
+    secondSwingLow := na
+    thirdSwingLow := na
+    fourthSwingLow := na
+
+    firstSwingLowBar := na
+    secondSwingLowBar := na
+    thirdSwingLowBar := na
+    fourthSwingLowBar := na
+
+    // Reset detected swing highs
+    detectedSwingHigh := na
+    detectedSwingHighBar := na
+
+    // Reset swing highs
+    firstSwingHigh := na
+    secondSwingHigh := na
+    thirdSwingHigh := na
+    fourthSwingHigh := na
+
+    firstSwingHighBar := na
+    secondSwingHighBar := na
+    thirdSwingHighBar := na
+    fourthSwingHighBar := na
+
+    // Reset detected swing lows
+    detectedSwingLow := na
+    detectedSwingLowBar := na
+    cnt := 0
+
+
+ //or not na(swingHigh))
+ //or ta.barssince(distributionpatternLocked) >= 20
+

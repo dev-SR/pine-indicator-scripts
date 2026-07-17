@@ -1,0 +1,214 @@
+
+//@version=5   
+indicator('Alpha Beta Gamma with Volume Candle fixed by Leo', overlay = false, shorttitle = 'ABG+Volume')
+// === 📈 Strike Price Settings ===
+group_strike = 'Strike Price Settings'
+tfStrike = input.timeframe('', title = 'Chart Timeframe', group = group_strike, inline = 'strike')
+displayOption = input.string('Open', title = 'Price Type', options = ['Open', 'High', 'Low', 'Close', 'HL2', 'HLC3', 'HLCC4'], group = group_strike, inline = 'strike', tooltip = 'Select which price (OHLC or average) to fetch from the closed bar of your selected timeframe.')
+// === 🔍 ABG Settings ===
+group_abg = 'ABG Parameters'
+len = input.int(title = 'ABG Length', defval = 37, group = group_abg, tooltip = 'Adjust for sensitivity.')
+smm = input.bool(false, title = 'Enable Alpha Beta Logic', group = group_abg, tooltip = 'Turns ON/OFF the core ABG calculation logic.')
+// === 🧵 Line & Label Style ===
+group_style = 'Visual Style Settings'
+lineStyle = input.string('Solid', title = 'Line Style', options = ['Solid', 'Dashed', 'Dotted'], group = group_style, inline = 'linestyle')
+styleValue = lineStyle == 'Solid' ? hline.style_solid : lineStyle == 'Dashed' ? hline.style_dashed : hline.style_dotted
+showLabels = input.bool(true, title = 'Show Labels', group = group_style, inline = 'label')
+labelSize = input.string('normal', title = 'Label Size', options = ['tiny', 'small', 'normal'], group = group_style, inline = 'label')
+labelColor = input.color(color.gray, title = 'Label Color', group = group_style, inline = 'label')
+labeloff = input.int(title = 'Label Offset', defval = 10, group = group_style, inline = 'label')
+sizeValue = labelSize == 'tiny' ? size.tiny : labelSize == 'small' ? size.small : size.normal
+// === 📊 Table Display ===
+group_table = 'Table Display'
+showTable = input.bool(true, title = 'Show Volume Table', group = group_table, inline = 'table')
+tableSize = input.string('small', title = 'Table Size', options = ['tiny', 'small', 'normal'], group = group_table, inline = 'table')
+tablePosition = input.string('Top Right', title = 'Position', options = ['Top Left', 'Top Right', 'Bottom Left', 'Bottom Right'], group = group_table, inline = 'table')
+// === 📦 Volume Analysis Settings ===
+group_volume = 'Volume Signal Settings'
+length_volume = input.int(400, title = 'Volume MA Length', minval = 10, group = group_volume, tooltip = 'Length of SMA to define volume baseline. Used for high/low/strong volume logic.')
+volumeThreshold = input.float(2.0, title = 'High Volume Threshold (x MA)', minval = 1.0, step = 0.1, group = group_volume, tooltip = 'Volume >= MA × this value = High Volume. Deep Blue Bull / Aqua Bear bars will show.')
+lowVolumeThreshold = input.float(0.5, title = 'Low Volume Threshold (x MA)', minval = 0.1, step = 0.1, group = group_volume, tooltip = 'Volume <= MA × this value = Low Volume. Light Blue Bull / Light Yellow Bear bars.')
+signalStrength = input.float(1.5, title = 'Signal Volume Strength Filter (x MA)', minval = 1.0, step = 0.1, group = group_volume, tooltip = 'Volume >= MA × this value = Strong Signal Volume. Violet Bull / Pink Bear bars will show.')
+showBullBearColors = input.bool(true, title = 'Show Bull/Bear Colors', group = group_volume, tooltip = 'Enables colored candle bars depending on volume classification and bullish/bearish candle body.')
+candleSizeMultiplier = input.float(1.5, title = 'Bull/Bear Size Multiplier', minval = 1.0, step = 0.1, group = group_volume, tooltip = 'Helps to identify strong candles based on body size × multiplier. Useful in signal refinement.')
+widthMultiplier = input.float(2.0, title = 'High Volume Width Multiplier', minval = 1.0, step = 0.1, group = group_volume, tooltip = 'Optional styling help to widen bars (if used in plotting). Useful for high volume emphasis.')
+//
+priceType() =>
+    switch displayOption
+        'Open' => open
+        'High' => high
+        'Low' => low
+        'Close' => close
+        'HL2' => (high + low) / 2
+        'HLC3' => (high + low + close) / 3
+        'HLCC4' => (high + low + 3 * close) / 4
+        => close
+//
+strike = request.security(syminfo.tickerid, tfStrike, priceType(), lookahead = barmerge.lookahead_off)
+// Calculate the Alpha, Beta, and Gamma values for ABG
+alpha_abg = (strike - ta.lowest(strike, len)) / len
+beta_abg = (ta.highest(strike, len) - ta.lowest(strike, len)) / len
+gamma_abg = (strike - ta.lowest(strike, len)) / (ta.highest(strike, len) - ta.lowest(strike, len))
+// Plot the ABG values
+plot(smm ? alpha_abg : na, title = 'Alpha', color = color.teal, linewidth = 1)
+plot(smm ? beta_abg : na, title = 'Beta', color = color.fuchsia, linewidth = 1)
+plot(gamma_abg, title = 'Gamma ABG', color = color.blue, linewidth = 1)
+// === 📊 Custom Band Levels (0–1 Range Divided into 8 parts) ===
+group_customBands = 'Custom Band Levels (0–1 Range Divided into 8 parts)'
+showCustomLines = input.bool(true, title = 'Show Custom Band Lines', group = group_customBands, tooltip = 'Toggle ON to draw 9 horizontal levels starting from 0 to 1, each separated by 1/8. Useful for grid-based trading, breakouts, and levels analysis.')
+line1Price = input.price(0.000, title = 'Line 1: 0.000 (0/8)', group = group_customBands, tooltip = 'Base band — Start of the 0–1 range (0 ÷ 8).')
+line2Price = input.price(0.125, title = 'Line 2: 0.125 (1/8)', group = group_customBands, tooltip = '1/8th of the full band range (1 ÷ 8 = 0.125).')
+line3Price = input.price(0.250, title = 'Line 3: 0.250 (2/8)', group = group_customBands, tooltip = '2/8th level (2 ÷ 8 = 0.250). Often used in quarter-grid strategies.')
+line4Price = input.price(0.375, title = 'Line 4: 0.375 (3/8)', group = group_customBands, tooltip = '3/8 band level (3 ÷ 8). Near the midzone before equilibrium.')
+line5Price = input.price(0.500, title = 'Line 5: 0.500 (4/8)', group = group_customBands, tooltip = 'Midpoint of the 0–1 range. (4 ÷ 8 = 0.5). A powerful psychological zone.')
+line6Price = input.price(0.625, title = 'Line 6: 0.625 (5/8)', group = group_customBands, tooltip = '5/8 of range. Good for identifying momentum continuation.')
+line7Price = input.price(0.750, title = 'Line 7: 0.750 (6/8)', group = group_customBands, tooltip = '6/8 of the range. Used for breakout watchers.')
+line8Price = input.price(0.875, title = 'Line 8: 0.875 (7/8)', group = group_customBands, tooltip = '7/8 of full range. Often shows exhaustion or overextension.')
+line9Price = input.price(1.000, title = 'Line 9: 1.000 (8/8)', group = group_customBands, tooltip = 'Top of the band — full 100%. Often reversal zone.')
+// Plot custom horizontal lines
+hline(showCustomLines ? line1Price : na, title = 'Line 0/8', color = color.gray, linestyle = styleValue)
+hline(showCustomLines ? line2Price : na, title = 'Line 1/8', color = color.green, linestyle = styleValue, linewidth = 2)
+hline(showCustomLines ? line3Price : na, title = 'Line 2/8', color = color.teal, linestyle = styleValue)
+hline(showCustomLines ? line4Price : na, title = 'Line 3/8', color = color.orange, linestyle = styleValue)
+hline(showCustomLines ? line5Price : na, title = 'Line 4/8 (Mid)', color = color.navy, linestyle = styleValue, linewidth = 2)
+hline(showCustomLines ? line6Price : na, title = 'Line 5/8', color = color.purple, linestyle = styleValue)
+hline(showCustomLines ? line7Price : na, title = 'Line 6/8', color = color.maroon, linestyle = styleValue)
+hline(showCustomLines ? line8Price : na, title = 'Line 7/8', color = color.red, linestyle = styleValue, linewidth = 2)
+hline(showCustomLines ? line9Price : na, title = 'Line 8/8', color = color.black, linestyle = styleValue)
+
+// === FIXED LABELS - NO OVERWRITING ===
+// Store label references in variables
+var label label1 = na
+var label label2 = na
+var label label3 = na
+var label label4 = na
+var label label5 = na
+var label label6 = na
+var label label7 = na
+var label label8 = na
+var label label9 = na
+
+if showLabels and showCustomLines
+    // Create or update labels only once
+    if na(label1)
+        label1 := label.new(bar_index + labeloff, line1Price, 'Base', color = labelColor, textcolor = color.orange, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label1, bar_index + labeloff)
+        label.set_y(label1, line1Price)
+    
+    if na(label2)
+        label2 := label.new(bar_index + labeloff, line2Price, 'Support Weak', color = labelColor, textcolor = color.lime, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label2, bar_index + labeloff)
+        label.set_y(label2, line2Price)
+    
+    if na(label3)
+        label3 := label.new(bar_index + labeloff, line3Price, 'Support', color = labelColor, textcolor = color.green, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label3, bar_index + labeloff)
+        label.set_y(label3, line3Price)
+    
+    if na(label4)
+        label4 := label.new(bar_index + labeloff, line4Price, 'Support Strong', color = labelColor, textcolor = color.teal, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label4, bar_index + labeloff)
+        label.set_y(label4, line4Price)
+    
+    if na(label5)
+        label5 := label.new(bar_index + labeloff, line5Price, 'Middle', color = labelColor, textcolor = color.aqua, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label5, bar_index + labeloff)
+        label.set_y(label5, line5Price)
+    
+    if na(label6)
+        label6 := label.new(bar_index + labeloff, line6Price, 'Resistance Weak', color = labelColor, textcolor = color.fuchsia, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label6, bar_index + labeloff)
+        label.set_y(label6, line6Price)
+    
+    if na(label7)
+        label7 := label.new(bar_index + labeloff, line7Price, 'Resistance', color = labelColor, textcolor = color.red, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label7, bar_index + labeloff)
+        label.set_y(label7, line7Price)
+    
+    if na(label8)
+        label8 := label.new(bar_index + labeloff, line8Price, 'Resistance Strong', color = labelColor, textcolor = color.maroon, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label8, bar_index + labeloff)
+        label.set_y(label8, line8Price)
+    
+    if na(label9)
+        label9 := label.new(bar_index + labeloff, line9Price, 'Top', color = labelColor, textcolor = color.purple, size = sizeValue, style = label.style_none, text_font_family = font.family_monospace, textalign = text.align_center)
+    else
+        label.set_x(label9, bar_index + labeloff)
+        label.set_y(label9, line9Price)
+
+// Store previous ABG values
+var float prev_alpha = na
+var float prev_beta = na
+var float prev_gamma = na
+// Calculate percentage changes
+alpha_pct = na(prev_alpha) ? 0 : (alpha_abg - prev_alpha) / prev_alpha * 100
+beta_pct = na(prev_beta) ? 0 : (beta_abg - prev_beta) / prev_beta * 100
+gamma_pct = na(prev_gamma) ? 0 : (gamma_abg - prev_gamma) / prev_gamma * 100
+// Update previous values
+prev_alpha := alpha_abg
+prev_beta := beta_abg
+prev_gamma := gamma_abg
+// === TABLE SIZE CONVERSION ===
+tableSizeValue = tableSize == 'tiny' ? size.tiny : tableSize == 'small' ? size.small : size.normal
+// === TABLE POSITION ENUM ===
+table_pos = tablePosition == 'Top Left' ? position.top_left : tablePosition == 'Top Right' ? position.top_right : tablePosition == 'Bottom Left' ? position.bottom_left : position.bottom_right
+// === CREATE TABLE ===
+if showTable and barstate.islast
+    var tbl = table.new(table_pos, 4, 5) // 5 rows, no branding
+    // === ROW 0: COLUMN HEADERS ===
+    table.cell(tbl, 0, 0, 'Variable', bgcolor = color.gray, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 1, 0, 'Value', bgcolor = color.gray, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 2, 0, '% Change', bgcolor = color.gray, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 3, 0, 'Status', bgcolor = color.gray, text_color = color.white, text_size = tableSizeValue)
+    // === ROW 1: ALPHA DATA ===
+    table.cell(tbl, 0, 1, 'Alpha', bgcolor = color.navy, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 1, 1, str.tostring(alpha_abg), bgcolor = color.navy, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 2, 1, str.tostring(alpha_pct, '#.##') + '%', bgcolor = color.navy, text_color = alpha_pct > 0 ? color.lime : alpha_pct < 0 ? color.red : color.white, text_size = tableSizeValue)
+    table.cell(tbl, 3, 1, alpha_pct > 0 ? '↑' : alpha_pct < 0 ? '↓' : '-', bgcolor = color.navy, text_color = color.white, text_size = tableSizeValue)
+    // === ROW 2: BETA DATA ===
+    table.cell(tbl, 0, 2, 'Beta', bgcolor = color.new(color.maroon, 0), text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 1, 2, str.tostring(beta_abg), bgcolor = color.new(color.maroon, 0), text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 2, 2, str.tostring(beta_pct, '#.##') + '%', bgcolor = color.new(color.maroon, 0), text_color = beta_pct > 0 ? color.lime : beta_pct < 0 ? color.red : color.white, text_size = tableSizeValue)
+    table.cell(tbl, 3, 2, beta_pct > 0 ? '↑' : beta_pct < 0 ? '↓' : '-', bgcolor = color.new(color.maroon, 0), text_color = color.white, text_size = tableSizeValue)
+    // === ROW 3: GAMMA DATA ===
+    table.cell(tbl, 0, 3, 'Gamma', bgcolor = color.new(color.black, 0), text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 1, 3, str.tostring(gamma_abg), bgcolor = color.new(color.black, 0), text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 2, 3, str.tostring(gamma_pct, '#.##') + '%', bgcolor = color.new(color.black, 0), text_color = gamma_pct > 0 ? color.lime : gamma_pct < 0 ? color.red : color.white, text_size = tableSizeValue)
+    table.cell(tbl, 3, 3, gamma_pct > 0 ? '↑' : gamma_pct < 0 ? '↓' : '-', bgcolor = color.new(color.black, 0), text_color = color.white, text_size = tableSizeValue)
+    // === ROW 4: FOOTER ===
+    table.cell(tbl, 0, 4, 'ABG Data', bgcolor = color.blue, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 1, 4, 'Real-Time', bgcolor = color.blue, text_color = color.white, text_size = tableSizeValue)
+    table.cell(tbl, 2, 4, '', bgcolor = color.blue)
+    table.cell(tbl, 3, 4, '', bgcolor = color.blue)
+// === MA LEVELS ===
+ma0 = ta.sma(volume, length_volume)
+ma1 = ma0 * 0.125
+ma2 = ma0 * 0.25
+ma3 = ma0 * 0.33
+ma4 = ma0 * 0.5
+ma5 = ma0 * 1
+ma6 = ma0 * 2
+ma7 = ma0 * 3
+ma8 = ma0 * 4
+ma9 = ma0 * 5
+ma10 = ma0 * 6
+ma11 = ma0 * 7
+ma12 = ma0 * 8
+ma13 = ma0 * 9
+ma14 = ma0 * 10
+ma15 = ma0 * 11
+// === CONDITIONS ===
+isBullish = close >= open
+isBearish = close < open
+isHighVolume = volume >= ma5 * volumeThreshold
+isLowVolume = volume <= ma5 * lowVolumeThreshold
+isStrongVolume = volume >= ma0 * signalStrength
+barcolor(showBullBearColors and isHighVolume and isBullish ? color.rgb(0, 26, 141) : showBullBearColors and isHighVolume and isBearish ? color.rgb(94, 242, 170) : showBullBearColors and isLowVolume and isBullish ? color.rgb(200, 220, 255) : showBullBearColors and isLowVolume and isBearish ? color.rgb(240, 240, 200) : showBullBearColors and isStrongVolume and isBullish ? color.rgb(243, 19, 255) : showBullBearColors and isStrongVolume and isBearish ? color.rgb(255, 0, 128) : na)
