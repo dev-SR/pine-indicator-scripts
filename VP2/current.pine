@@ -27,6 +27,20 @@ sessValColor  = input.color(color.green, title="VAL Color", group=grpSessProf)
 sessFillVa    = input.bool(true, title="Fill Value Area", group=grpSessProf)
 sessFillTrans = input.int(85, title="VA Fill Transparency", minval=0, maxval=100, group=grpSessProf)
 
+grpHvnLvn = "HVN / LVN Zones"
+showHvn       = input.bool(true, title="Show HVN Zones", group=grpHvnLvn)
+showLvn       = input.bool(true, title="Show LVN Zones", group=grpHvnLvn)
+hvnZThresh    = input.float(0.70, title="HVN Z-Score Threshold", step=0.05, group=grpHvnLvn)
+lvnZThresh    = input.float(-0.70, title="LVN Z-Score Threshold", step=0.05, group=grpHvnLvn)
+maxHvnZones   = input.int(6, title="Max HVN Zones", minval=1, maxval=12, group=grpHvnLvn)
+maxLvnZones   = input.int(4, title="Max LVN Zones", minval=1, maxval=12, group=grpHvnLvn)
+zoneMergePct  = input.float(2.0, title="Merge Gap (% of Range)", minval=0.1, maxval=10.0, group=grpHvnLvn)
+zonePadPct    = input.float(2.5, title="Zone Pad (% of Range)", minval=0.0, maxval=10.0, group=grpHvnLvn)
+hvnBoxColor   = input.color(color.new(color.teal, 75), title="HVN Box Color", group=grpHvnLvn)
+hvnBoxBorder  = input.color(color.new(color.teal, 40), title="HVN Box Border", group=grpHvnLvn)
+lvnBoxColor   = input.color(color.new(color.maroon, 80), title="LVN Box Color", group=grpHvnLvn)
+lvnBoxBorder  = input.color(color.new(color.maroon, 50), title="LVN Box Border", group=grpHvnLvn)
+
 grpWeek = "Previous Week"
 showWk       = input.bool(true, title="Show Previous Week", group=grpWeek)
 wkProfColor  = input.color(color.new(color.blue, 70), title="Profile Color", group=grpWeek)
@@ -82,12 +96,19 @@ asBoxBorder = input.color(color.new(color.red,    92), title="Asia Box Border", 
 // ========================================================================
 // TYPES
 // ========================================================================
+type VolumeZone
+    float lo
+    float hi
+    float zAbs
+
 type ProfileGfx
     polyline fullPoly
     polyline vaPoly
     line     pocLine
     line     vahLine
     line     valLine
+    box[]    hvnBoxes
+    box[]    lvnBoxes
 
 type ProfileSnap
     int     startIdx
@@ -137,6 +158,8 @@ type ProfileState
     label pocLabel
     label vahLabel
     label valLabel
+    box[] hvnBoxes
+    box[] lvnBoxes
 
 type SessionBox
     box   b
@@ -151,23 +174,27 @@ type DevProfile
     line      pocLine
     line      vahLine
     line      valLine
+    box[]     hvnBoxes
+    box[]     lvnBoxes
 
 newDevProfile() =>
-    DevProfile.new(SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index), na, na, na, na, na)
+    DevProfile.new(SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index), na, na, na, na, na, array.new_box(), array.new_box())
+
+newProfileState(string name, bool show, color pc, color vac, color poc, color vah, color val, int rows, float vaPct, float width, int labOff) =>
+    ProfileState.new(name, show, pc, vac, poc, vah, val, rows, vaPct, width, labOff, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na, array.new_box(), array.new_box())
 
 // ========================================================================
 // VARIABLES
 // ========================================================================
-var ProfileState wkState = ProfileState.new("PW",  showWk, wkProfColor, wkVaColor, wkPocColor, wkVahColor, wkValColor, wkRows, wkVaPct, wkWidth, 60, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
-var ProfileState nyState = ProfileState.new("PNY", showNY, nyProfColor, nyVaColor, nyPocColor, nyVahColor, nyValColor, nyRows, nyVaPct, nyWidth, 40, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
-var ProfileState onState = ProfileState.new("POV", showON, onProfColor, onVaColor, onPocColor, onVahColor, onValColor, onRows, onVaPct, onWidth, 20, array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index, na, na, na, na, na, na, na, na)
+var ProfileState wkState = newProfileState("PW",  showWk, wkProfColor, wkVaColor, wkPocColor, wkVahColor, wkValColor, wkRows, wkVaPct, wkWidth, 60)
+var ProfileState nyState = newProfileState("PNY", showNY, nyProfColor, nyVaColor, nyPocColor, nyVahColor, nyValColor, nyRows, nyVaPct, nyWidth, 40)
+var ProfileState onState = newProfileState("POV", showON, onProfColor, onVaColor, onPocColor, onVahColor, onValColor, onRows, onVaPct, onWidth, 20)
 
 var SessionBox nyBoxState = SessionBox.new(na, 0.0, 0.0, 0)
 var SessionBox onBoxState = SessionBox.new(na, 0.0, 0.0, 0)
 var SessionBox lnBoxState = SessionBox.new(na, 0.0, 0.0, 0)
 var SessionBox asBoxState = SessionBox.new(na, 0.0, 0.0, 0)
 
-// Fixed session-profile history (label-less, session-bounded lines)
 var array<ProfileGfx> nyHist = array.new<ProfileGfx>()
 var array<ProfileGfx> onHist = array.new<ProfileGfx>()
 var ProfileSnap nyFrozen = na
@@ -175,7 +202,6 @@ var ProfileSnap onFrozen = na
 var SessAccum nyAccum = SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index)
 var SessAccum onAccum = SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index)
 
-// Developing profiles for Custom Sessions (grp4) — update on candle close
 var DevProfile nyDev = newDevProfile()
 var DevProfile onDev = newDevProfile()
 var DevProfile lnDev = newDevProfile()
@@ -192,7 +218,6 @@ bool inWeek    = true
 bool isNewWeek = ta.change(time("W")) != 0
 bool isEndWeek = isNewWeek
 
-// Previous NY / ON (labeled profiles)
 bool inNY    = not na(time(timeframe.period, nySessionStr, tzInput))
 bool isNewNY = inNY and not inNY[1]
 bool isEndNY = not inNY and inNY[1]
@@ -201,7 +226,6 @@ bool inON    = not na(time(timeframe.period, onSessionStr, tzInput))
 bool isNewON = inON and not inON[1]
 bool isEndON = not inON and inON[1]
 
-// Custom Sessions (grp4) — developing profiles + session boxes
 bool inNY_cs    = not na(time(timeframe.period, nySession, tzInput))
 bool isNewNY_cs = inNY_cs and not inNY_cs[1]
 bool isEndNY_cs = not inNY_cs and inNY_cs[1]
@@ -219,6 +243,181 @@ bool isNewAS_cs = inAS_cs and not inAS_cs[1]
 bool isEndAS_cs = not inAS_cs and inAS_cs[1]
 
 // ========================================================================
+// HVN / LVN ZONE HELPERS
+// ========================================================================
+deleteZoneBoxes(box[] boxes) =>
+    if not na(boxes)
+        while array.size(boxes) > 0
+            box b = array.shift(boxes)
+            if not na(b)
+                box.delete(b)
+    true
+
+sortZonesDesc(VolumeZone[] zones) =>
+    int n = array.size(zones)
+    if n > 1
+        for i = 1 to n - 1
+            VolumeZone key = array.get(zones, i)
+            int j = i - 1
+            while j >= 0
+                if array.get(zones, j).zAbs < key.zAbs
+                    array.set(zones, j + 1, array.get(zones, j))
+                    j -= 1
+                else
+                    break
+            array.set(zones, j + 1, key)
+    true
+
+mergeOverlapZones(VolumeZone[] zones) =>
+    VolumeZone[] merged = array.new<VolumeZone>()
+    int n = array.size(zones)
+    if n == 0
+        merged
+    else if n == 1
+        array.push(merged, array.get(zones, 0))
+        merged
+    else
+        // sort by lo ascending for overlap scan
+        for i = 1 to n - 1
+            VolumeZone key = array.get(zones, i)
+            int j = i - 1
+            while j >= 0
+                if array.get(zones, j).lo > key.lo
+                    array.set(zones, j + 1, array.get(zones, j))
+                    j -= 1
+                else
+                    break
+            array.set(zones, j + 1, key)
+
+        VolumeZone cur = array.get(zones, 0)
+        for i = 1 to n - 1
+            VolumeZone nxt = array.get(zones, i)
+            if nxt.lo <= cur.hi
+                cur := VolumeZone.new(math.min(cur.lo, nxt.lo), math.max(cur.hi, nxt.hi), math.max(cur.zAbs, nxt.zAbs))
+            else
+                array.push(merged, cur)
+                cur := nxt
+        array.push(merged, cur)
+        merged
+
+capZones(VolumeZone[] zones, int maxN) =>
+    sortZonesDesc(zones)
+    while array.size(zones) > maxN
+        array.pop(zones)
+    true
+
+// Cluster qualifying row indices into padded VolumeZones
+clusterZones(int[] idxs, float[] zArr, float dLow, float rowSize, float R, float pad, bool isHvn) =>
+    VolumeZone[] out = array.new<VolumeZone>()
+    int nIdx = array.size(idxs)
+    if nIdx == 0
+        out
+    else
+        int deltaJMax = math.max(1, int(math.ceil((zoneMergePct / 100.0) * R / rowSize)))
+        int clusterStart = 0
+        for k = 1 to nIdx
+            bool split = k == nIdx
+            if not split
+                int prevJ = array.get(idxs, k - 1)
+                int curJ  = array.get(idxs, k)
+                split := (curJ - prevJ) > deltaJMax
+            if split
+                int j0 = array.get(idxs, clusterStart)
+                int j1 = array.get(idxs, k - 1)
+                float zPk = isHvn ? -1e10 : 1e10
+                for t = clusterStart to k - 1
+                    float zj = array.get(zArr, array.get(idxs, t))
+                    zPk := isHvn ? math.max(zPk, zj) : math.min(zPk, zj)
+                float lo = math.max(dLow, dLow + (j0 * rowSize) - pad)
+                float hi = math.min(dLow + R, dLow + ((j1 + 1) * rowSize) + pad)
+                if hi > lo
+                    array.push(out, VolumeZone.new(lo, hi, math.abs(zPk)))
+                clusterStart := k
+        out
+
+extractZones(float[] rowVols, float dLow, float dHigh, float rowSize, VolumeZone[] hvnOut, VolumeZone[] lvnOut) =>
+    array.clear(hvnOut)
+    array.clear(lvnOut)
+    int rows = array.size(rowVols)
+    float R = dHigh - dLow
+    if rows <= 1 or rowSize <= 0 or R <= 0
+        true
+    else
+        float sum = 0.0
+        for j = 0 to rows - 1
+            sum += array.get(rowVols, j)
+        float mean = sum / rows
+        float varSum = 0.0
+        for j = 0 to rows - 1
+            float d = array.get(rowVols, j) - mean
+            varSum += d * d
+        float stdev = math.sqrt(varSum / rows)
+        float eps = math.max(stdev, 1e-10)
+
+        float[] zArr = array.new_float(rows, 0.0)
+        int[] hvnIdx = array.new_int()
+        int[] lvnIdx = array.new_int()
+        for j = 0 to rows - 1
+            float z = (array.get(rowVols, j) - mean) / eps
+            array.set(zArr, j, z)
+            if z >= hvnZThresh
+                array.push(hvnIdx, j)
+            if z <= lvnZThresh
+                array.push(lvnIdx, j)
+
+        float pad = (zonePadPct / 100.0) * R
+        VolumeZone[] hvnRaw = clusterZones(hvnIdx, zArr, dLow, rowSize, R, pad, true)
+        VolumeZone[] lvnRaw = clusterZones(lvnIdx, zArr, dLow, rowSize, R, pad, false)
+
+        VolumeZone[] hvnMerged = mergeOverlapZones(hvnRaw)
+        VolumeZone[] lvnMerged = mergeOverlapZones(lvnRaw)
+        capZones(hvnMerged, maxHvnZones)
+        capZones(lvnMerged, maxLvnZones)
+
+        int nHvn = array.size(hvnMerged)
+        if nHvn > 0
+            for i = 0 to nHvn - 1
+                array.push(hvnOut, array.get(hvnMerged, i))
+        int nLvn = array.size(lvnMerged)
+        if nLvn > 0
+            for i = 0 to nLvn - 1
+                array.push(lvnOut, array.get(lvnMerged, i))
+        true
+
+drawZoneBoxes(int startIdx, int endIdx, VolumeZone[] zones, bool isHvn, box[] dest) =>
+    deleteZoneBoxes(dest)
+    int n = array.size(zones)
+    if n > 0 and ((isHvn and showHvn) or (not isHvn and showLvn))
+        color bg = isHvn ? hvnBoxColor : lvnBoxColor
+        color bd = isHvn ? hvnBoxBorder : lvnBoxBorder
+        int right = math.max(startIdx, endIdx)
+        for i = 0 to n - 1
+            VolumeZone z = array.get(zones, i)
+            box b = box.new(startIdx, z.hi, right, z.lo, border_color=bd, bgcolor=bg, border_width=1)
+            array.push(dest, b)
+    true
+
+applyZonesFromSnap(ProfileSnap s, box[] hvnBoxes, box[] lvnBoxes) =>
+    VolumeZone[] hvnZ = array.new<VolumeZone>()
+    VolumeZone[] lvnZ = array.new<VolumeZone>()
+    if not na(s)
+        extractZones(s.rowVols, s.dLow, s.dHigh, s.rowSize, hvnZ, lvnZ)
+        drawZoneBoxes(s.startIdx, s.endIdx, hvnZ, true, hvnBoxes)
+        drawZoneBoxes(s.startIdx, s.endIdx, lvnZ, false, lvnBoxes)
+    else
+        deleteZoneBoxes(hvnBoxes)
+        deleteZoneBoxes(lvnBoxes)
+    true
+
+applyZonesFromRows(float[] rowVols, float dLow, float dHigh, float rowSize, int startIdx, int endIdx, box[] hvnBoxes, box[] lvnBoxes) =>
+    VolumeZone[] hvnZ = array.new<VolumeZone>()
+    VolumeZone[] lvnZ = array.new<VolumeZone>()
+    extractZones(rowVols, dLow, dHigh, rowSize, hvnZ, lvnZ)
+    drawZoneBoxes(startIdx, endIdx, hvnZ, true, hvnBoxes)
+    drawZoneBoxes(startIdx, endIdx, lvnZ, false, lvnBoxes)
+    true
+
+// ========================================================================
 // FIXED SESSION PROFILE HELPERS
 // ========================================================================
 deleteProfileGfx(ProfileGfx p) =>
@@ -232,11 +431,16 @@ deleteProfileGfx(ProfileGfx p) =>
         line.delete(p.vahLine)
     if not na(p.valLine)
         line.delete(p.valLine)
+    deleteZoneBoxes(p.hvnBoxes)
+    deleteZoneBoxes(p.lvnBoxes)
+    true
 
 drawFixedProfile(ProfileSnap s) =>
     int   dayLength    = s.endIdx - s.startIdx
     float maxWidthBars = dayLength * (sessWidth / 100.0)
     int   rows         = array.size(s.rowVols)
+    box[] hvnBoxes     = array.new_box()
+    box[] lvnBoxes     = array.new_box()
 
     chart.point[] points = array.new<chart.point>()
     array.push(points, chart.point.from_index(s.startIdx, s.dLow))
@@ -262,12 +466,12 @@ drawFixedProfile(ProfileSnap s) =>
         array.push(vaPoints, chart.point.from_index(s.startIdx, s.valPrice))
         vaPoly := polyline.new(vaPoints, line_color=sessVaColor, closed=true, fill_color=sessFillVa ? color.new(sessVaColor, sessFillTrans) : na)
 
-    // Lines confined to session window — no extend, no labels
     line pocLine = line.new(s.startIdx, s.pocPrice, s.endIdx, s.pocPrice, color=sessPocColor, width=2)
     line vahLine = line.new(s.startIdx, s.vahPrice, s.endIdx, s.vahPrice, color=sessVahColor, style=line.style_dotted)
     line valLine = line.new(s.startIdx, s.valPrice, s.endIdx, s.valPrice, color=sessValColor, style=line.style_dotted)
 
-    ProfileGfx.new(fullPoly, vaPoly, pocLine, vahLine, valLine)
+    applyZonesFromSnap(s, hvnBoxes, lvnBoxes)
+    ProfileGfx.new(fullPoly, vaPoly, pocLine, vahLine, valLine, hvnBoxes, lvnBoxes)
 
 buildSnap(SessAccum acc) =>
     ProfileSnap result = na
@@ -326,14 +530,12 @@ pushHist(array<ProfileGfx> hist, ProfileSnap snap) =>
         while array.size(hist) > sessShowN
             ProfileGfx old = array.shift(hist)
             deleteProfileGfx(old)
+    true
 
-// Finalize a completed session into fixed history.
-// If holdAsPrev: keep snap frozen (drawn by Previous NY/ON) — promote on next session end.
 finalizeFixedSession(array<ProfileGfx> hist, ProfileSnap frozen, SessAccum acc, bool showHist, bool holdAsPrev) =>
     ProfileSnap newFrozen = frozen
     ProfileSnap snap = buildSnap(acc)
     if not na(snap)
-        // Promote prior "previous" session into fixed history (no longer the active previous)
         if showHist and not na(frozen)
             pushHist(hist, frozen)
         newFrozen := holdAsPrev ? snap : na
@@ -347,6 +549,7 @@ method resetAccum(SessAccum acc) =>
     array.clear(acc.highs)
     array.clear(acc.lows)
     array.clear(acc.vols)
+    true
 
 method accumulate(SessAccum acc, bool inSes, bool isNewSes) =>
     if isNewSes
@@ -357,8 +560,8 @@ method accumulate(SessAccum acc, bool inSes, bool isNewSes) =>
         array.push(acc.lows,  low)
         array.push(acc.vols,  volume)
         acc.endIndex := bar_index
+    true
 
-// Fixed NY / ON session profiles
 if isEndNY and (showSessNY or showNY)
     nyFrozen := finalizeFixedSession(nyHist, nyFrozen, nyAccum, showSessNY, showNY)
     nyAccum.resetAccum()
@@ -372,7 +575,6 @@ if showSessNY or showNY
 if showSessON or showON
     onAccum.accumulate(inON, isNewON)
 
-// Clear histories when toggled off
 if not showSessNY
     while array.size(nyHist) > 0
         deleteProfileGfx(array.shift(nyHist))
@@ -404,6 +606,8 @@ method clearDev(DevProfile d) =>
     if not na(d.valLine)
         line.delete(d.valLine)
         d.valLine := na
+    deleteZoneBoxes(d.hvnBoxes)
+    deleteZoneBoxes(d.lvnBoxes)
     true
 
 method redrawDev(DevProfile d) =>
@@ -437,10 +641,11 @@ method redrawDev(DevProfile d) =>
             array.push(vaPoints, chart.point.from_index(s.startIdx, s.valPrice))
             d.vaPoly := polyline.new(vaPoints, line_color=sessVaColor, closed=true, fill_color=sessFillVa ? color.new(sessVaColor, sessFillTrans) : na)
 
-        // Label-less, confined to current session window
         d.pocLine := line.new(s.startIdx, s.pocPrice, s.endIdx, s.pocPrice, color=sessPocColor, width=2)
         d.vahLine := line.new(s.startIdx, s.vahPrice, s.endIdx, s.vahPrice, color=sessVahColor, style=line.style_dotted)
         d.valLine := line.new(s.startIdx, s.valPrice, s.endIdx, s.valPrice, color=sessValColor, style=line.style_dotted)
+
+        applyZonesFromSnap(s, d.hvnBoxes, d.lvnBoxes)
     true
 
 method processDev(DevProfile d, bool inSes, bool isNewSes, bool isEndSes) =>
@@ -455,7 +660,6 @@ method processDev(DevProfile d, bool inSes, bool isNewSes, bool isEndSes) =>
             d.accum.startIndex := bar_index
             d.accum.resetAccum()
             d.clearDev()
-        // Update only after candle close (confirmed bar)
         if inSes and barstate.isconfirmed
             array.push(d.accum.highs, high)
             array.push(d.accum.lows,  low)
@@ -463,6 +667,7 @@ method processDev(DevProfile d, bool inSes, bool isNewSes, bool isEndSes) =>
             d.accum.endIndex := bar_index
             d.redrawDev()
     true
+
 nyDev.processDev(inNY_cs, isNewNY_cs, isEndNY_cs)
 onDev.processDev(inON_cs, isNewON_cs, isEndON_cs)
 lnDev.processDev(inLN_cs, isNewLN_cs, isEndLN_cs)
@@ -496,6 +701,9 @@ method clearGfx(ProfileState state) =>
     if not na(state.valLabel)
         label.delete(state.valLabel)
         state.valLabel := na
+    deleteZoneBoxes(state.hvnBoxes)
+    deleteZoneBoxes(state.lvnBoxes)
+    true
 
 method processSession(ProfileState state, bool inSes, bool isNewSes, bool isEndSes) =>
     if not state.show
@@ -595,6 +803,9 @@ method processSession(ProfileState state, bool inSes, bool isNewSes, bool isEndS
                     state.vahLabel := label.new(bar_index + state.labelOffset, vahPrice, hText, color=color.new(state.vahColor, 92), textcolor=state.vahColor, style=label.style_label_lower_left, size=size.small)
                     state.valLabel := label.new(bar_index + state.labelOffset, valPrice, lText, color=color.new(state.valColor, 92), textcolor=state.valColor, style=label.style_label_lower_left, size=size.small)
 
+                    // HVN/LVN boxes confined to session window (start → end), not extend.right
+                    applyZonesFromRows(rowVols, dLow, dHigh, rowSize, state.startIndex, state.endIndex, state.hvnBoxes, state.lvnBoxes)
+
             array.clear(state.highs)
             array.clear(state.lows)
             array.clear(state.vols)
@@ -617,6 +828,7 @@ method processSession(ProfileState state, bool inSes, bool isNewSes, bool isEndS
             label.set_x(state.vahLabel, bar_index + state.labelOffset)
         if not na(state.valLabel)
             label.set_x(state.valLabel, bar_index + state.labelOffset)
+    true
 
 wkState.processSession(inWeek, isNewWeek, isEndWeek)
 nyState.processSession(inNY,   isNewNY,   isEndNY)
@@ -639,19 +851,9 @@ method updateBox(SessionBox sb, bool show, bool inSes, bool isNewSes, color bgCo
             box.set_top(sb.b,    sb.h)
             box.set_bottom(sb.b, sb.l)
             box.set_right(sb.b,  bar_index)
+    true
 
-bool inNY_box    = inNY_cs
-bool isNewNY_box = isNewNY_cs
-nyBoxState.updateBox(showNyBox, inNY_box, isNewNY_box, nyBoxColor, nyBoxBorder)
-
-bool inON_box    = inON_cs
-bool isNewON_box = isNewON_cs
-onBoxState.updateBox(showOnBox, inON_box, isNewON_box, onBoxColor, onBoxBorder)
-
-bool inLN_box    = inLN_cs
-bool isNewLN_box = isNewLN_cs
-lnBoxState.updateBox(showLnBox, inLN_box, isNewLN_box, lnBoxColor, lnBoxBorder)
-
-bool inAS_box    = inAS_cs
-bool isNewAS_box = isNewAS_cs
-asBoxState.updateBox(showAsBox, inAS_box, isNewAS_box, asBoxColor, asBoxBorder)
+nyBoxState.updateBox(showNyBox, inNY_cs, isNewNY_cs, nyBoxColor, nyBoxBorder)
+onBoxState.updateBox(showOnBox, inON_cs, isNewON_cs, onBoxColor, onBoxBorder)
+lnBoxState.updateBox(showLnBox, inLN_cs, isNewLN_cs, lnBoxColor, lnBoxBorder)
+asBoxState.updateBox(showAsBox, inAS_cs, isNewAS_cs, asBoxColor, asBoxBorder)
