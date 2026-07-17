@@ -14,6 +14,7 @@ tzInput   = input.string("America/New_York", title="Timezone", group=grp4)
 grpSessProf = "Session Profiles"
 showSessNY   = input.bool(true, title="Show NY Session Profiles", group=grpSessProf)
 showSessON   = input.bool(true, title="Show ON Session Profiles", group=grpSessProf)
+showDevProf  = input.bool(true, title="Show Developing Profile", group=grpSessProf)
 sessShowN    = input.int(8, title="Show Last N Sessions (each)", minval=1, maxval=20, group=grpSessProf)
 sessRows     = input.int(200, title="Rows", minval=10, maxval=1000, group=grpSessProf)
 sessVaPct    = input.float(68, title="VA %", group=grpSessProf)
@@ -143,6 +144,17 @@ type SessionBox
     float l
     int   startIdx
 
+type DevProfile
+    SessAccum accum
+    polyline  fullPoly
+    polyline  vaPoly
+    line      pocLine
+    line      vahLine
+    line      valLine
+
+newDevProfile() =>
+    DevProfile.new(SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index), na, na, na, na, na)
+
 // ========================================================================
 // VARIABLES
 // ========================================================================
@@ -163,6 +175,12 @@ var ProfileSnap onFrozen = na
 var SessAccum nyAccum = SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index)
 var SessAccum onAccum = SessAccum.new(array.new_float(), array.new_float(), array.new_float(), bar_index, bar_index)
 
+// Developing profiles for Custom Sessions (grp4) — update on candle close
+var DevProfile nyDev = newDevProfile()
+var DevProfile onDev = newDevProfile()
+var DevProfile lnDev = newDevProfile()
+var DevProfile asDev = newDevProfile()
+
 wkState.show := showWk
 nyState.show := showNY
 onState.show := showON
@@ -174,6 +192,7 @@ bool inWeek    = true
 bool isNewWeek = ta.change(time("W")) != 0
 bool isEndWeek = isNewWeek
 
+// Previous NY / ON (labeled profiles)
 bool inNY    = not na(time(timeframe.period, nySessionStr, tzInput))
 bool isNewNY = inNY and not inNY[1]
 bool isEndNY = not inNY and inNY[1]
@@ -181,6 +200,23 @@ bool isEndNY = not inNY and inNY[1]
 bool inON    = not na(time(timeframe.period, onSessionStr, tzInput))
 bool isNewON = inON and not inON[1]
 bool isEndON = not inON and inON[1]
+
+// Custom Sessions (grp4) — developing profiles + session boxes
+bool inNY_cs    = not na(time(timeframe.period, nySession, tzInput))
+bool isNewNY_cs = inNY_cs and not inNY_cs[1]
+bool isEndNY_cs = not inNY_cs and inNY_cs[1]
+
+bool inON_cs    = not na(time(timeframe.period, onSession, tzInput))
+bool isNewON_cs = inON_cs and not inON_cs[1]
+bool isEndON_cs = not inON_cs and inON_cs[1]
+
+bool inLN_cs    = not na(time(timeframe.period, lnSession, tzInput))
+bool isNewLN_cs = inLN_cs and not inLN_cs[1]
+bool isEndLN_cs = not inLN_cs and inLN_cs[1]
+
+bool inAS_cs    = not na(time(timeframe.period, asSession, tzInput))
+bool isNewAS_cs = inAS_cs and not inAS_cs[1]
+bool isEndAS_cs = not inAS_cs and inAS_cs[1]
 
 // ========================================================================
 // FIXED SESSION PROFILE HELPERS
@@ -348,6 +384,89 @@ if not showSessON
         deleteProfileGfx(array.shift(onHist))
     if not showON
         onFrozen := na
+
+// ========================================================================
+// DEVELOPING PROFILES (Custom Sessions — update on candle close)
+// ========================================================================
+method clearDev(DevProfile d) =>
+    if not na(d.fullPoly)
+        polyline.delete(d.fullPoly)
+        d.fullPoly := na
+    if not na(d.vaPoly)
+        polyline.delete(d.vaPoly)
+        d.vaPoly := na
+    if not na(d.pocLine)
+        line.delete(d.pocLine)
+        d.pocLine := na
+    if not na(d.vahLine)
+        line.delete(d.vahLine)
+        d.vahLine := na
+    if not na(d.valLine)
+        line.delete(d.valLine)
+        d.valLine := na
+    true
+
+method redrawDev(DevProfile d) =>
+    d.clearDev()
+    ProfileSnap s = buildSnap(d.accum)
+    if not na(s)
+        int   dayLength    = s.endIdx - s.startIdx
+        float maxWidthBars = math.max(1, dayLength) * (sessWidth / 100.0)
+        int   rows         = array.size(s.rowVols)
+
+        chart.point[] points = array.new<chart.point>()
+        array.push(points, chart.point.from_index(s.startIdx, s.dLow))
+        for j = 0 to rows - 1
+            float price = s.dLow + (j * s.rowSize)
+            float vol   = array.get(s.rowVols, j)
+            int xOffset = math.round((vol / s.maxVol) * maxWidthBars)
+            array.push(points, chart.point.from_index(s.startIdx + xOffset, price))
+        array.push(points, chart.point.from_index(s.startIdx, s.dHigh))
+        array.push(points, chart.point.from_index(s.startIdx, s.dLow))
+        d.fullPoly := polyline.new(points, line_color=sessProfColor, closed=true)
+
+        if s.upperRow >= s.lowerRow
+            chart.point[] vaPoints = array.new<chart.point>()
+            array.push(vaPoints, chart.point.from_index(s.startIdx, s.valPrice))
+            for j = s.lowerRow to s.upperRow
+                float price = s.dLow + (j * s.rowSize)
+                float vol   = array.get(s.rowVols, j)
+                int xOffset = math.round((vol / s.maxVol) * maxWidthBars)
+                array.push(vaPoints, chart.point.from_index(s.startIdx + xOffset, price))
+            array.push(vaPoints, chart.point.from_index(s.startIdx, s.vahPrice))
+            array.push(vaPoints, chart.point.from_index(s.startIdx, s.valPrice))
+            d.vaPoly := polyline.new(vaPoints, line_color=sessVaColor, closed=true, fill_color=sessFillVa ? color.new(sessVaColor, sessFillTrans) : na)
+
+        // Label-less, confined to current session window
+        d.pocLine := line.new(s.startIdx, s.pocPrice, s.endIdx, s.pocPrice, color=sessPocColor, width=2)
+        d.vahLine := line.new(s.startIdx, s.vahPrice, s.endIdx, s.vahPrice, color=sessVahColor, style=line.style_dotted)
+        d.valLine := line.new(s.startIdx, s.valPrice, s.endIdx, s.valPrice, color=sessValColor, style=line.style_dotted)
+    true
+
+method processDev(DevProfile d, bool inSes, bool isNewSes, bool isEndSes) =>
+    if not showDevProf
+        d.clearDev()
+        d.accum.resetAccum()
+    else
+        if isEndSes
+            d.clearDev()
+            d.accum.resetAccum()
+        if isNewSes
+            d.accum.startIndex := bar_index
+            d.accum.resetAccum()
+            d.clearDev()
+        // Update only after candle close (confirmed bar)
+        if inSes and barstate.isconfirmed
+            array.push(d.accum.highs, high)
+            array.push(d.accum.lows,  low)
+            array.push(d.accum.vols,  volume)
+            d.accum.endIndex := bar_index
+            d.redrawDev()
+    true
+nyDev.processDev(inNY_cs, isNewNY_cs, isEndNY_cs)
+onDev.processDev(inON_cs, isNewON_cs, isEndON_cs)
+lnDev.processDev(inLN_cs, isNewLN_cs, isEndLN_cs)
+asDev.processDev(inAS_cs, isNewAS_cs, isEndAS_cs)
 
 // ========================================================================
 // PREVIOUS WEEK / NY / ON (labeled, extend.right)
@@ -521,18 +640,18 @@ method updateBox(SessionBox sb, bool show, bool inSes, bool isNewSes, color bgCo
             box.set_bottom(sb.b, sb.l)
             box.set_right(sb.b,  bar_index)
 
-bool inNY_box    = not na(time(timeframe.period, nySession, tzInput))
-bool isNewNY_box = inNY_box and not inNY_box[1]
+bool inNY_box    = inNY_cs
+bool isNewNY_box = isNewNY_cs
 nyBoxState.updateBox(showNyBox, inNY_box, isNewNY_box, nyBoxColor, nyBoxBorder)
 
-bool inON_box    = not na(time(timeframe.period, onSession, tzInput))
-bool isNewON_box = inON_box and not inON_box[1]
+bool inON_box    = inON_cs
+bool isNewON_box = isNewON_cs
 onBoxState.updateBox(showOnBox, inON_box, isNewON_box, onBoxColor, onBoxBorder)
 
-bool inLN_box    = not na(time(timeframe.period, lnSession, tzInput))
-bool isNewLN_box = inLN_box and not inLN_box[1]
+bool inLN_box    = inLN_cs
+bool isNewLN_box = isNewLN_cs
 lnBoxState.updateBox(showLnBox, inLN_box, isNewLN_box, lnBoxColor, lnBoxBorder)
 
-bool inAS_box    = not na(time(timeframe.period, asSession, tzInput))
-bool isNewAS_box = inAS_box and not inAS_box[1]
+bool inAS_box    = inAS_cs
+bool isNewAS_box = isNewAS_cs
 asBoxState.updateBox(showAsBox, inAS_box, isNewAS_box, asBoxColor, asBoxBorder)
